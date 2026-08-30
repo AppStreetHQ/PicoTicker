@@ -10,5 +10,8 @@ FINNHUB_API_KEY = "your-finnhub-api-key"
 # Symbols to cycle through on the display
 TICKERS = ["AAPL", "MSFT", "TSLA"]
 
-# Seconds between quote refreshes for each ticker
-POLL_INTERVAL = 15
+# Seconds between re-fetching quotes from Finnhub. The display keeps
+# scrolling through TICKERS continuously between refreshes, reusing the
+# last-fetched prices — this is what keeps you under Finnhub's free-tier
+# rate limit (60 calls/min) regardless of how long TICKERS gets.
+QUOTE_REFRESH_INTERVAL = 60

@@ -50,6 +50,7 @@ docs — `display.py` here is written against the confirmed, working API.
 ```
 boot.py       — runs once on power-up, connects to WiFi
 main.py       — main loop: fetch quote -> render -> repeat
+wifi.py       — shared WiFi connect/retry logic, used by boot.py and main.py
 display.py    — wraps picounicorn.PicoUnicorn, scrolls text across the matrix
 font3x5.py    — a minimal 3x5 pixel font (digits, A-Z, $ % + - . ^)
 stocks.py     — Finnhub quote fetching
@@ -60,7 +61,15 @@ config.example.py — copy to config.py and fill in secrets (gitignored)
 
 - `config.py` is gitignored since it holds your WiFi password and API key —
   never commit it.
-- Finnhub's free tier is rate-limited (60 calls/min); the default poll
-  interval in `config.example.py` is well under that.
+- The display keeps scrolling through `TICKERS` continuously; quotes are
+  only re-fetched from Finnhub every `QUOTE_REFRESH_INTERVAL` seconds
+  (default 60), reusing cached prices in between. This keeps scrolling
+  snappy and stays well under Finnhub's free-tier rate limit (60 calls/min)
+  no matter how long `TICKERS` gets.
 - The 16x7 matrix only fits a tiny 3x5 font, so text scrolls rather than
   displaying statically.
+- On this firmware, WiFi sometimes doesn't come up in time during `boot.py`
+  on a cold boot, even with retries — seems to need more real elapsed time
+  since power-on than `boot.py` alone gets. `wifi.ensure_connected()` is
+  also called at the top of every quote refresh in `main.py`, so it
+  self-heals within the first refresh cycle rather than getting stuck.
