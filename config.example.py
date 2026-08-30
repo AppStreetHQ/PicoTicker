@@ -15,3 +15,6 @@ TICKERS = ["AAPL", "MSFT", "TSLA"]
 # last-fetched prices — this is what keeps you under Finnhub's free-tier
 # rate limit (60 calls/min) regardless of how long TICKERS gets.
 QUOTE_REFRESH_INTERVAL = 60
+
+# Seconds per column-shift while scrolling text — lower is faster.
+SCROLL_SPEED = 0.14
