@@ -65,7 +65,13 @@ config.example.py — copy to config.py and fill in secrets (gitignored)
   only re-fetched from Finnhub every `QUOTE_REFRESH_INTERVAL` seconds
   (default 60), reusing cached prices in between. This keeps scrolling
   snappy and stays well under Finnhub's free-tier rate limit (60 calls/min)
-  no matter how long `TICKERS` gets.
+  no matter how long `TICKERS` gets. While the market's closed, refreshes
+  slow down to `CLOSED_QUOTE_REFRESH_INTERVAL` seconds (default 300)
+  instead, since prices aren't moving.
+- When the market's closed (checked via Finnhub's market-status endpoint),
+  quotes still show the same green/red up/down colours, just dimmed
+  (`CLOSED_DIM_FACTOR` in `main.py`) rather than switched to a neutral
+  colour.
 - The 16x7 matrix only fits a tiny 3x5 font, so text scrolls rather than
   displaying statically.
 - On this firmware, WiFi sometimes doesn't come up in time during `boot.py`

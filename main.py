@@ -12,6 +12,7 @@ DOWN_COLOR = (220, 30, 30)
 NEUTRAL_COLOR = (200, 200, 200)
 CLOSED_DIM_FACTOR = 0.35
 SCROLL_SPEED = getattr(config, "SCROLL_SPEED", 0.14)
+CLOSED_QUOTE_REFRESH_INTERVAL = getattr(config, "CLOSED_QUOTE_REFRESH_INTERVAL", 300)
 
 quotes = {}
 market_open = True  # assume open until the first market-status check
@@ -41,7 +42,8 @@ def run():
 
     while True:
         for symbol in config.TICKERS:
-            if time.ticks_diff(time.ticks_ms(), last_refresh) >= config.QUOTE_REFRESH_INTERVAL * 1000:
+            interval = config.QUOTE_REFRESH_INTERVAL if market_open else CLOSED_QUOTE_REFRESH_INTERVAL
+            if time.ticks_diff(time.ticks_ms(), last_refresh) >= interval * 1000:
                 refresh_quotes()
                 last_refresh = time.ticks_ms()
 
