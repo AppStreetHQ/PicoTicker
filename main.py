@@ -38,13 +38,22 @@ def refresh_quotes():
     if status is not None:
         market_open = status  # else keep the last known state
 
-    # While closed, prices aren't moving — skip re-fetching every ticker
-    # and just keep the last-known quotes until the market reopens.
     if market_open or need_quotes:
+        # Prices are moving (or this is the first fetch ever) — refresh
+        # every ticker.
         for symbol in config.TICKERS:
             quotes[symbol] = fetch_quote(symbol)
             time.sleep(FETCH_THROTTLE_SECONDS)
         need_quotes = False
+    else:
+        # Closed, and we already have a baseline — don't re-fetch tickers
+        # that already succeeded, but do retry ones that failed, so a
+        # transient blip self-heals instead of showing "ERROR" until the
+        # market reopens.
+        for symbol in config.TICKERS:
+            if quotes.get(symbol) is None:
+                quotes[symbol] = fetch_quote(symbol)
+                time.sleep(FETCH_THROTTLE_SECONDS)
 
 
 def run():
