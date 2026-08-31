@@ -31,19 +31,21 @@ def all_fetches_failed():
 
 
 def fetch_and_store(symbol):
-    """Fetch one ticker and show immediate feedback on failure — a
-    refresh cycle can take a while (throttled, one request per ticker),
-    and staying silent the whole time looks like the board's hung."""
-    quote = fetch_quote(symbol)
-    quotes[symbol] = quote
-    if quote is None:
-        display.scroll_text("API ERROR", DOWN_COLOR, speed=SCROLL_SPEED)
+    """Fetch one ticker. Doesn't declare pass/fail here — a single
+    failure mid-cycle doesn't mean the whole API is down, so that call
+    is left to the display loop once every ticker's been attempted."""
+    quotes[symbol] = fetch_quote(symbol)
     time.sleep(FETCH_THROTTLE_SECONDS)
 
 
 def refresh_quotes():
     global market_open, need_quotes
     wifi.ensure_connected()
+
+    # A refresh cycle is throttled (one request per ticker) and can take
+    # a while — keep the banner scrolling so the screen never looks
+    # blank/dead, without prematurely claiming anything about API health.
+    display.scroll_text("PICOTICKER", NEUTRAL_COLOR, speed=SCROLL_SPEED)
 
     status = fetch_market_open()
     if status is not None:
@@ -66,8 +68,6 @@ def refresh_quotes():
 
 
 def run():
-    display.scroll_text("PICOTICKER", NEUTRAL_COLOR, speed=SCROLL_SPEED)
-
     refresh_quotes()
     last_refresh = time.ticks_ms()
 
