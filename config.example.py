@@ -8,7 +8,7 @@ WIFI_PASSWORD = "your-wifi-password"
 FINNHUB_API_KEY = "your-finnhub-api-key"
 
 # Symbols to cycle through on the display
-TICKERS = ["AAPL", "MSFT", "TSLA"]
+TICKERS = ["AAPL", "GOOGL", "MSFT", "NVDA", "RKLB", "SPCX", "QQQ"]
 
 # Seconds between re-fetching quotes from Finnhub. The display keeps
 # scrolling through TICKERS continuously between refreshes, reusing the
@@ -17,4 +17,4 @@ TICKERS = ["AAPL", "MSFT", "TSLA"]
 QUOTE_REFRESH_INTERVAL = 60
 
 # Seconds per column-shift while scrolling text — lower is faster.
-SCROLL_SPEED = 0.14
+SCROLL_SPEED = 0.13
