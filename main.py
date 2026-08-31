@@ -24,6 +24,12 @@ def dim(color):
     return tuple(int(c * CLOSED_DIM_FACTOR) for c in color)
 
 
+def all_fetches_failed():
+    """True once we've actually tried fetching and every ticker came back
+    empty — a sign the API itself is down, not just one bad symbol."""
+    return bool(quotes) and all(v is None for v in quotes.values())
+
+
 def refresh_quotes():
     global market_open, need_quotes
     wifi.ensure_connected()
@@ -56,7 +62,10 @@ def run():
 
             quote = quotes.get(symbol)
             if quote is None:
-                display.scroll_text("{} N/A".format(symbol), NEUTRAL_COLOR, speed=SCROLL_SPEED)
+                if all_fetches_failed():
+                    display.scroll_text("API ERROR", DOWN_COLOR, speed=SCROLL_SPEED)
+                else:
+                    display.scroll_text(symbol + " ERROR", DOWN_COLOR, speed=SCROLL_SPEED)
             else:
                 price, change_percent = quote
                 color = UP_COLOR if change_percent >= 0 else DOWN_COLOR
