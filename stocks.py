@@ -4,6 +4,7 @@ import config
 
 QUOTE_URL = "https://finnhub.io/api/v1/quote"
 MARKET_STATUS_URL = "https://finnhub.io/api/v1/stock/market-status"
+SEARCH_URL = "https://finnhub.io/api/v1/search"
 
 
 def fetch_quote(symbol):
@@ -37,6 +38,28 @@ def fetch_market_open():
         return bool(data.get("isOpen"))
     except Exception as exc:
         print("fetch_market_open failed", exc)
+        return None
+    finally:
+        if response is not None:
+            response.close()
+
+
+def symbol_exists(symbol):
+    """Check Finnhub's symbol lookup for a real, exact-match ticker.
+    True/False when Finnhub actually answered; None if the check itself
+    failed (API/network issue) — that's "unknown", not "invalid", so
+    callers shouldn't reject a symbol just because this came back None."""
+    url = "{}?q={}&token={}".format(SEARCH_URL, symbol, config.FINNHUB_API_KEY)
+    response = None
+    try:
+        response = urequests.get(url)
+        data = response.json()
+        for result in data.get("result", []):
+            if result.get("symbol") == symbol:
+                return True
+        return False
+    except Exception as exc:
+        print("symbol_exists failed for", symbol, exc)
         return None
     finally:
         if response is not None:

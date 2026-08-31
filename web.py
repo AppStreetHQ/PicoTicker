@@ -5,8 +5,13 @@ non-blocking accept, so it never stalls fetching or the display."""
 
 import json
 import socket
+import time
+
+import config
+from stocks import symbol_exists
 
 TICKERS_FILE = "tickers.json"
+FETCH_THROTTLE_SECONDS = getattr(config, "FETCH_THROTTLE_SECONDS", 0.5)
 
 PAGE_TEMPLATE = r"""<!DOCTYPE html>
 <html>
@@ -26,7 +31,7 @@ button:disabled {{ opacity: 0.5; cursor: not-allowed; }}
 <form method="POST" action="/tickers">
 <p>Symbols (comma-separated):</p>
 <textarea name="tickers" id="tickers" rows="4">{tickers}</textarea>
-<p id="hint"></p>
+<p id="hint">{error}</p>
 <p><button type="submit" id="save" disabled>Save</button></p>
 </form>
 <script>
@@ -116,6 +121,28 @@ def _parse_tickers_field(raw):
     return sorted(p.strip().upper() for p in parts if p.strip())
 
 
+def _validation_error(new_tickers, current_tickers):
+    """Check any symbols that weren't already saved before — no point
+    re-checking ones already confirmed valid. Returns an error message
+    string, or "" if the submission is fine to save. A symbol only
+    blocks saving if Finnhub definitively says it doesn't exist; a
+    failed lookup (API/network issue) doesn't block it, since we can't
+    tell "invalid" from "Finnhub's having trouble right now"."""
+    if not new_tickers:
+        return "Enter at least one symbol"
+
+    unknown = [t for t in new_tickers if t not in current_tickers]
+    bad = []
+    for symbol in unknown:
+        if symbol_exists(symbol) is False:
+            bad.append(symbol)
+        time.sleep(FETCH_THROTTLE_SECONDS)
+
+    if bad:
+        return "Not a real ticker: " + ", ".join(bad)
+    return ""
+
+
 def poll(server_socket, tickers):
     """Check for one pending request and handle it if there is one.
     Returns the (possibly updated) tickers list. Safe to call every
@@ -143,12 +170,16 @@ def poll(server_socket, tickers):
         if method == "POST" and path == "/tickers":
             fields = _parse_form(body)
             new_tickers = _parse_tickers_field(fields.get("tickers", ""))
-            if new_tickers:
+            error = _validation_error(new_tickers, tickers)
+            if error:
+                page = PAGE_TEMPLATE.format(tickers=", ".join(new_tickers), error=error).encode()
+                conn.send(b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n" + page)
+            else:
                 tickers = new_tickers
                 save_tickers(tickers)
-            conn.send(b"HTTP/1.1 303 See Other\r\nLocation: /\r\n\r\n")
+                conn.send(b"HTTP/1.1 303 See Other\r\nLocation: /\r\n\r\n")
         else:
-            page = PAGE_TEMPLATE.format(tickers=", ".join(tickers)).encode()
+            page = PAGE_TEMPLATE.format(tickers=", ".join(tickers), error="").encode()
             conn.send(b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n" + page)
     except Exception as exc:
         print("web request failed", exc)
