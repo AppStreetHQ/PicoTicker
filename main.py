@@ -30,6 +30,17 @@ def all_fetches_failed():
     return bool(quotes) and all(v is None for v in quotes.values())
 
 
+def fetch_and_store(symbol):
+    """Fetch one ticker and show immediate feedback on failure — a
+    refresh cycle can take a while (throttled, one request per ticker),
+    and staying silent the whole time looks like the board's hung."""
+    quote = fetch_quote(symbol)
+    quotes[symbol] = quote
+    if quote is None:
+        display.scroll_text("API ERROR", DOWN_COLOR, speed=SCROLL_SPEED)
+    time.sleep(FETCH_THROTTLE_SECONDS)
+
+
 def refresh_quotes():
     global market_open, need_quotes
     wifi.ensure_connected()
@@ -42,8 +53,7 @@ def refresh_quotes():
         # Prices are moving (or this is the first fetch ever) — refresh
         # every ticker.
         for symbol in config.TICKERS:
-            quotes[symbol] = fetch_quote(symbol)
-            time.sleep(FETCH_THROTTLE_SECONDS)
+            fetch_and_store(symbol)
         need_quotes = False
     else:
         # Closed, and we already have a baseline — don't re-fetch tickers
@@ -52,8 +62,7 @@ def refresh_quotes():
         # market reopens.
         for symbol in config.TICKERS:
             if quotes.get(symbol) is None:
-                quotes[symbol] = fetch_quote(symbol)
-                time.sleep(FETCH_THROTTLE_SECONDS)
+                fetch_and_store(symbol)
 
 
 def run():
