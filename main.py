@@ -3,6 +3,7 @@ import time
 import _thread
 
 import config
+import web
 import wifi
 from display import Display
 from stocks import fetch_market_open, fetch_quote, format_quote
@@ -17,6 +18,11 @@ SCROLL_SPEED = getattr(config, "SCROLL_SPEED", 0.14)
 CLOSED_QUOTE_REFRESH_INTERVAL = getattr(config, "CLOSED_QUOTE_REFRESH_INTERVAL", 300)
 FETCH_THROTTLE_SECONDS = getattr(config, "FETCH_THROTTLE_SECONDS", 0.5)
 
+# The mutable, live ticker list — seeded once from config.TICKERS on
+# first boot, then persisted to tickers.json and editable via the web
+# UI from then on. config.TICKERS itself is never touched again.
+tickers = web.load_tickers(getattr(config, "TICKERS", []))
+
 quotes = {}
 market_open = True  # assume open until the first market-status check
 need_quotes = True  # startup: no data at all yet
@@ -30,7 +36,7 @@ def all_fetches_failed():
     """True once every ticker has been attempted at least once and all of
     them came back empty — a sign the API itself is down, not just one
     bad symbol (or startup still in progress with some tickers pending)."""
-    return len(quotes) == len(config.TICKERS) and all(v is None for v in quotes.values())
+    return len(quotes) == len(tickers) and all(v is None for v in quotes.values())
 
 
 def fetch_and_store(symbol):
@@ -52,7 +58,7 @@ def refresh_quotes():
     if market_open or need_quotes:
         # Prices are moving (or this is the first fetch ever) — refresh
         # every ticker.
-        for symbol in config.TICKERS:
+        for symbol in tickers:
             fetch_and_store(symbol)
         need_quotes = False
     else:
@@ -60,7 +66,7 @@ def refresh_quotes():
         # that already succeeded, but do retry ones that failed, so a
         # transient blip self-heals instead of showing "ERROR" until the
         # market reopens.
-        for symbol in config.TICKERS:
+        for symbol in tickers:
             if quotes.get(symbol) is None:
                 fetch_and_store(symbol)
 
@@ -73,7 +79,7 @@ def display_loop():
     starts showing real data as soon as its own first fetch lands,
     rather than waiting for the whole startup batch to finish."""
     while True:
-        for symbol in config.TICKERS:
+        for symbol in tickers:
             if symbol not in quotes:
                 # Not attempted yet (startup) — nothing to show for this
                 # one specifically, others may already have real data.
@@ -95,7 +101,12 @@ def display_loop():
 
 
 def fetch_loop():
-    """Runs on the main core: keeps `quotes` fresh in the background."""
+    """Runs on the main core: keeps `quotes` fresh, and polls the ticker-
+    editing web server — both stay on this thread since it's the one
+    that already safely owns the network stack."""
+    global tickers
+    server = web.start_server()
+
     refresh_quotes()
     last_refresh = time.ticks_ms()
 
@@ -104,6 +115,7 @@ def fetch_loop():
         if time.ticks_diff(time.ticks_ms(), last_refresh) >= interval * 1000:
             refresh_quotes()
             last_refresh = time.ticks_ms()
+        tickers = web.poll(server, tickers)
         time.sleep(1)
 
 
