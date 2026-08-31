@@ -16,6 +16,12 @@ TICKERS = ["AAPL", "GOOGL", "MSFT", "NVDA", "RKLB", "SPCX", "QQQ"]
 # rate limit (60 calls/min) regardless of how long TICKERS gets.
 QUOTE_REFRESH_INTERVAL = 60
 
+# Seconds to wait between each ticker's fetch within a single refresh
+# cycle. Without this, fetching a long TICKERS list fires every request
+# back-to-back with no gap, which risks tripping Finnhub's Cloudflare-
+# fronted rate limiting even while staying under the per-minute quota.
+FETCH_THROTTLE_SECONDS = 0.5
+
 # Seconds between market-status checks while the market is closed. Quotes
 # themselves aren't re-fetched at all while closed (prices aren't moving) —
 # this just controls how often we check whether it's reopened.

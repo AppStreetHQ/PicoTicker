@@ -13,6 +13,7 @@ NEUTRAL_COLOR = (200, 200, 200)
 CLOSED_DIM_FACTOR = 0.35
 SCROLL_SPEED = getattr(config, "SCROLL_SPEED", 0.14)
 CLOSED_QUOTE_REFRESH_INTERVAL = getattr(config, "CLOSED_QUOTE_REFRESH_INTERVAL", 300)
+FETCH_THROTTLE_SECONDS = getattr(config, "FETCH_THROTTLE_SECONDS", 0.5)
 
 quotes = {}
 market_open = True  # assume open until the first market-status check
@@ -36,6 +37,7 @@ def refresh_quotes():
     if market_open or need_quotes:
         for symbol in config.TICKERS:
             quotes[symbol] = fetch_quote(symbol)
+            time.sleep(FETCH_THROTTLE_SECONDS)
         need_quotes = False
 
 

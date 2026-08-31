@@ -71,6 +71,11 @@ config.example.py — copy to config.py and fill in secrets (gitignored)
   aren't re-fetched at all — only the market-status check itself runs,
   every `CLOSED_QUOTE_REFRESH_INTERVAL` seconds (default 300), so the
   display keeps showing the last known prices until it reopens.
+- Within a refresh cycle, each ticker's fetch is spaced out by
+  `FETCH_THROTTLE_SECONDS` (default 0.5) rather than firing all of them
+  back-to-back — Finnhub is Cloudflare-fronted and occasionally returns
+  a plain-text rate-limit error instead of JSON under bursty requests,
+  even while comfortably under the per-minute quota.
 - When the market's closed (checked via Finnhub's market-status endpoint),
   quotes still show the same green/red up/down colours, just dimmed
   (`CLOSED_DIM_FACTOR` in `main.py`) rather than switched to a neutral
