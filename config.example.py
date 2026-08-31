@@ -16,8 +16,9 @@ TICKERS = ["AAPL", "GOOGL", "MSFT", "NVDA", "RKLB", "SPCX", "QQQ"]
 # rate limit (60 calls/min) regardless of how long TICKERS gets.
 QUOTE_REFRESH_INTERVAL = 60
 
-# Seconds between refreshes while the market is closed — prices aren't
-# moving, so there's no need to poll as often.
+# Seconds between market-status checks while the market is closed. Quotes
+# themselves aren't re-fetched at all while closed (prices aren't moving) —
+# this just controls how often we check whether it's reopened.
 CLOSED_QUOTE_REFRESH_INTERVAL = 300
 
 # Seconds per column-shift while scrolling text — lower is faster.

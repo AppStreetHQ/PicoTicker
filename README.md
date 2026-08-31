@@ -65,9 +65,10 @@ config.example.py — copy to config.py and fill in secrets (gitignored)
   only re-fetched from Finnhub every `QUOTE_REFRESH_INTERVAL` seconds
   (default 60), reusing cached prices in between. This keeps scrolling
   snappy and stays well under Finnhub's free-tier rate limit (60 calls/min)
-  no matter how long `TICKERS` gets. While the market's closed, refreshes
-  slow down to `CLOSED_QUOTE_REFRESH_INTERVAL` seconds (default 300)
-  instead, since prices aren't moving.
+  no matter how long `TICKERS` gets. While the market's closed, quotes
+  aren't re-fetched at all — only the market-status check itself runs,
+  every `CLOSED_QUOTE_REFRESH_INTERVAL` seconds (default 300), so the
+  display keeps showing the last known prices until it reopens.
 - When the market's closed (checked via Finnhub's market-status endpoint),
   quotes still show the same green/red up/down colours, just dimmed
   (`CLOSED_DIM_FACTOR` in `main.py`) rather than switched to a neutral

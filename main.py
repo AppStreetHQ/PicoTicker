@@ -16,6 +16,7 @@ CLOSED_QUOTE_REFRESH_INTERVAL = getattr(config, "CLOSED_QUOTE_REFRESH_INTERVAL",
 
 quotes = {}
 market_open = True  # assume open until the first market-status check
+need_quotes = True  # always fetch once on startup, even if market is closed
 
 
 def dim(color):
@@ -23,15 +24,19 @@ def dim(color):
 
 
 def refresh_quotes():
-    global market_open
+    global market_open, need_quotes
     wifi.ensure_connected()
 
     status = fetch_market_open()
     if status is not None:
         market_open = status  # else keep the last known state
 
-    for symbol in config.TICKERS:
-        quotes[symbol] = fetch_quote(symbol)
+    # While closed, prices aren't moving — skip re-fetching every ticker
+    # and just keep the last-known quotes until the market reopens.
+    if market_open or need_quotes:
+        for symbol in config.TICKERS:
+            quotes[symbol] = fetch_quote(symbol)
+        need_quotes = False
 
 
 def run():
