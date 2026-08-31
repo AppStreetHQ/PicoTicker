@@ -77,9 +77,16 @@ def display_loop():
     timing — it never blocks on network I/O, so a slow or fully-blocked
     fetch cycle on the other core never freezes the screen. Each ticker
     starts showing real data as soon as its own first fetch lands,
-    rather than waiting for the whole startup batch to finish."""
+    rather than waiting for the whole startup batch to finish. Holding
+    the Unicorn Pack's X button shows the board's IP address instead,
+    so the web UI (for editing TICKERS) is easy to find."""
     while True:
         for symbol in tickers:
+            if display.pu.is_pressed(display.pu.BUTTON_X):
+                ip = wifi.ip_address or "NO WIFI"
+                display.scroll_text("HTTP://" + ip, NEUTRAL_COLOR, speed=SCROLL_SPEED)
+                continue
+
             if symbol not in quotes:
                 # Not attempted yet (startup) — nothing to show for this
                 # one specifically, others may already have real data.
