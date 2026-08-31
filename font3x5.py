@@ -48,8 +48,13 @@ GLYPHS = {
     "-": ("...", "...", "###", "...", "..."),
     ".": ("...", "...", "...", "...", ".#."),
     "^": (".#.", "###", "#.#", "...", "..."),
+    "v": ("...", "...", "#.#", "###", ".#."),  # "^" flipped vertically
 }
 
 
 def glyph_for(char):
+    # Case-sensitive first: "v" (down arrow) must stay distinct from the
+    # letter "V" (e.g. in ticker symbols like NVDA).
+    if char in GLYPHS:
+        return GLYPHS[char]
     return GLYPHS.get(char.upper(), GLYPHS[" "])
