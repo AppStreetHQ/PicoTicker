@@ -27,9 +27,10 @@ def dim(color):
 
 
 def all_fetches_failed():
-    """True once we've actually tried fetching and every ticker came back
-    empty — a sign the API itself is down, not just one bad symbol."""
-    return bool(quotes) and all(v is None for v in quotes.values())
+    """True once every ticker has been attempted at least once and all of
+    them came back empty — a sign the API itself is down, not just one
+    bad symbol (or startup still in progress with some tickers pending)."""
+    return len(quotes) == len(config.TICKERS) and all(v is None for v in quotes.values())
 
 
 def fetch_and_store(symbol):
@@ -68,14 +69,18 @@ def display_loop():
     """Runs on the second core. Cycles the display from whatever's
     currently in `quotes`, entirely independent of the fetch loop's own
     timing — it never blocks on network I/O, so a slow or fully-blocked
-    fetch cycle on the other core never freezes the screen."""
-    while need_quotes:
-        # No data fetched even once yet — nothing meaningful to show.
-        display.scroll_text("PICOTICKER", NEUTRAL_COLOR, speed=SCROLL_SPEED)
-
+    fetch cycle on the other core never freezes the screen. Each ticker
+    starts showing real data as soon as its own first fetch lands,
+    rather than waiting for the whole startup batch to finish."""
     while True:
         for symbol in config.TICKERS:
-            quote = quotes.get(symbol)
+            if symbol not in quotes:
+                # Not attempted yet (startup) — nothing to show for this
+                # one specifically, others may already have real data.
+                display.scroll_text("PICOTICKER", NEUTRAL_COLOR, speed=SCROLL_SPEED)
+                continue
+
+            quote = quotes[symbol]
             if quote is None:
                 if all_fetches_failed():
                     display.scroll_text("API ERROR", DOWN_COLOR, speed=SCROLL_SPEED)

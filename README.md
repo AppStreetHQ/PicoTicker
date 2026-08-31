@@ -44,14 +44,17 @@ written against the actual API on the board.
    and `config.py` to the root of the device — easiest via
    [Thonny](https://thonny.org/) ("Save as... Raspberry Pi Pico"), or
    `mpremote cp *.py :` if you have `mpremote` installed.
-4. Reset the board. It connects to WiFi, then loops through `TICKERS`,
-   scrolling each quote across the matrix before moving to the next.
+4. Reset the board. It connects to WiFi, then runs fetching and display on
+   the RP2350's two separate cores (see Notes below) — each ticker starts
+   showing real data as soon as its own first fetch lands, so the matrix
+   fills in progressively rather than waiting for the whole batch.
 
 ## Project layout
 
 ```
 boot.py       — runs once on power-up, connects to WiFi
-main.py       — main loop: fetch quote -> render -> repeat
+main.py       — fetch_loop() on the main core, display_loop() on a second
+                thread (via _thread) on the other core
 wifi.py       — shared WiFi connect/retry logic, used by boot.py and main.py
 display.py    — wraps picounicorn.PicoUnicorn, scrolls text across the matrix
 font3x5.py    — a minimal 3x5 pixel font (digits, A-Z, $ % + - . ^)
@@ -87,3 +90,12 @@ config.example.py — copy to config.py and fill in secrets (gitignored)
   since power-on than `boot.py` alone gets. `wifi.ensure_connected()` is
   also called at the top of every quote refresh in `main.py`, so it
   self-heals within the first refresh cycle rather than getting stuck.
+- The RP2350 has two cores, and network fetching was the only thing that
+  could ever make the display freeze — `main.py` now runs `fetch_loop()`
+  on the main core and `display_loop()` on a second thread (`_thread`) on
+  the other core. The display thread never touches WiFi/sockets at all;
+  it just reads the shared `quotes` dict and drives the LED matrix, so a
+  slow or fully-blocked fetch cycle never freezes the screen. Each ticker
+  shows "PICOTICKER" only until its own first fetch completes, then
+  switches permanently to real data for that ticker — no need to wait
+  for the whole startup batch.
