@@ -3,6 +3,7 @@ import urequests
 import config
 
 QUOTE_URL = "https://finnhub.io/api/v1/quote"
+MARKET_STATUS_URL = "https://finnhub.io/api/v1/stock/market-status"
 
 
 def fetch_quote(symbol):
@@ -20,6 +21,22 @@ def fetch_quote(symbol):
         return price, change_percent
     except Exception as exc:
         print("fetch_quote failed for", symbol, exc)
+        return None
+    finally:
+        if response is not None:
+            response.close()
+
+
+def fetch_market_open():
+    """Return True/False for whether the US market is open, or None on failure."""
+    url = "{}?exchange=US&token={}".format(MARKET_STATUS_URL, config.FINNHUB_API_KEY)
+    response = None
+    try:
+        response = urequests.get(url)
+        data = response.json()
+        return bool(data.get("isOpen"))
+    except Exception as exc:
+        print("fetch_market_open failed", exc)
         return None
     finally:
         if response is not None:
