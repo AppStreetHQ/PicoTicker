@@ -8,7 +8,7 @@ import socket
 
 TICKERS_FILE = "tickers.json"
 
-PAGE_TEMPLATE = """<!DOCTYPE html>
+PAGE_TEMPLATE = r"""<!DOCTYPE html>
 <html>
 <head>
 <title>PicoTicker</title>
@@ -17,15 +17,48 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
 body {{ font-family: sans-serif; max-width: 480px; margin: 40px auto; padding: 0 16px; }}
 textarea {{ width: 100%; box-sizing: border-box; font-size: 1rem; }}
 button {{ font-size: 1rem; padding: 8px 16px; }}
+button:disabled {{ opacity: 0.5; cursor: not-allowed; }}
+#hint {{ color: #b00; min-height: 1.2em; font-size: 0.9rem; }}
 </style>
 </head>
 <body>
 <h1>PicoTicker</h1>
 <form method="POST" action="/tickers">
 <p>Symbols (comma-separated):</p>
-<textarea name="tickers" rows="4">{tickers}</textarea>
-<p><button type="submit">Save</button></p>
+<textarea name="tickers" id="tickers" rows="4">{tickers}</textarea>
+<p id="hint"></p>
+<p><button type="submit" id="save" disabled>Save</button></p>
 </form>
+<script>
+var textarea = document.getElementById("tickers");
+var button = document.getElementById("save");
+var hint = document.getElementById("hint");
+var initial = textarea.value;
+
+function isValidSymbol(s) {{
+    return s.length >= 1 && s.length <= 6 && /^[A-Za-z.]+$/.test(s);
+}}
+
+function validate(value) {{
+    var parts = value.replace(/\r/g, ",").replace(/\n/g, ",").split(",");
+    var count = 0;
+    for (var i = 0; i < parts.length; i++) {{
+        var s = parts[i].trim();
+        if (s.length === 0) {{ continue; }}
+        if (!isValidSymbol(s)) {{ return "Invalid symbol: " + s; }}
+        count++;
+    }}
+    if (count === 0) {{ return "Enter at least one symbol"; }}
+    return "";
+}}
+
+textarea.addEventListener("input", function () {{
+    var changed = textarea.value !== initial;
+    var error = validate(textarea.value);
+    hint.textContent = changed ? error : "";
+    button.disabled = !changed || error !== "";
+}});
+</script>
 </body>
 </html>"""
 
@@ -33,10 +66,11 @@ button {{ font-size: 1rem; padding: 8px 16px; }}
 def load_tickers(default):
     try:
         with open(TICKERS_FILE) as f:
-            return json.load(f)
+            return sorted(json.load(f))
     except Exception:
-        save_tickers(list(default))
-        return list(default)
+        tickers = sorted(default)
+        save_tickers(tickers)
+        return tickers
 
 
 def save_tickers(tickers):
@@ -79,7 +113,7 @@ def _parse_form(body):
 
 def _parse_tickers_field(raw):
     parts = raw.replace("\r", ",").replace("\n", ",").split(",")
-    return [p.strip().upper() for p in parts if p.strip()]
+    return sorted(p.strip().upper() for p in parts if p.strip())
 
 
 def poll(server_socket, tickers):
