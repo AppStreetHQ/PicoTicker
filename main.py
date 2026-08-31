@@ -71,6 +71,32 @@ def refresh_quotes():
                 fetch_and_store(symbol)
 
 
+def _render_ticker(symbol):
+    if display.pu.is_pressed(display.pu.BUTTON_X):
+        ip = wifi.ip_address or "NO WIFI"
+        display.scroll_text("HTTP://" + ip, NEUTRAL_COLOR, speed=SCROLL_SPEED)
+        return
+
+    if symbol not in quotes:
+        # Not attempted yet (startup) — nothing to show for this one
+        # specifically, others may already have real data.
+        display.scroll_text("PICOTICKER", NEUTRAL_COLOR, speed=SCROLL_SPEED)
+        return
+
+    quote = quotes[symbol]
+    if quote is None:
+        if all_fetches_failed():
+            display.scroll_text("API ERROR", DOWN_COLOR, speed=SCROLL_SPEED)
+        else:
+            display.scroll_text(symbol + " ERROR", DOWN_COLOR, speed=SCROLL_SPEED)
+    else:
+        price, change_percent = quote
+        color = UP_COLOR if change_percent >= 0 else DOWN_COLOR
+        if not market_open:
+            color = dim(color)
+        display.scroll_text(format_quote(symbol, price, change_percent), color, speed=SCROLL_SPEED)
+
+
 def display_loop():
     """Runs on the second core. Cycles the display from whatever's
     currently in `quotes`, entirely independent of the fetch loop's own
@@ -79,32 +105,21 @@ def display_loop():
     starts showing real data as soon as its own first fetch lands,
     rather than waiting for the whole startup batch to finish. Holding
     the Unicorn Pack's X button shows the board's IP address instead,
-    so the web UI (for editing TICKERS) is easy to find."""
+    so the web UI (for editing TICKERS) is easy to find.
+
+    Each ticker's render is wrapped in a try/except: an uncaught
+    exception on this thread doesn't print a visible traceback the way
+    a main-thread crash does — it just silently kills the thread,
+    leaving the screen permanently blank with no diagnostic. Catching
+    and logging here means a one-off error skips a turn instead of
+    ending the whole display."""
     while True:
         for symbol in tickers:
-            if display.pu.is_pressed(display.pu.BUTTON_X):
-                ip = wifi.ip_address or "NO WIFI"
-                display.scroll_text("HTTP://" + ip, NEUTRAL_COLOR, speed=SCROLL_SPEED)
-                continue
-
-            if symbol not in quotes:
-                # Not attempted yet (startup) — nothing to show for this
-                # one specifically, others may already have real data.
-                display.scroll_text("PICOTICKER", NEUTRAL_COLOR, speed=SCROLL_SPEED)
-                continue
-
-            quote = quotes[symbol]
-            if quote is None:
-                if all_fetches_failed():
-                    display.scroll_text("API ERROR", DOWN_COLOR, speed=SCROLL_SPEED)
-                else:
-                    display.scroll_text(symbol + " ERROR", DOWN_COLOR, speed=SCROLL_SPEED)
-            else:
-                price, change_percent = quote
-                color = UP_COLOR if change_percent >= 0 else DOWN_COLOR
-                if not market_open:
-                    color = dim(color)
-                display.scroll_text(format_quote(symbol, price, change_percent), color, speed=SCROLL_SPEED)
+            try:
+                _render_ticker(symbol)
+            except Exception as exc:
+                print("display_loop error on", symbol, exc)
+                time.sleep(1)
 
 
 def fetch_loop():
