@@ -15,21 +15,23 @@ colour-coded green for up, red for down.
 This needs **Pimoroni's own MicroPython fork** (not stock MicroPython) —
 it bundles the `picounicorn` module that drives the LED matrix.
 
-⚠️ As of writing, the current `v1.29.0-1` release of
-[pimoroni-pico](https://github.com/pimoroni/pimoroni-pico/releases) does
+⚠️ The `v1.29.0-1` release of
+[pimoroni-pico](https://github.com/pimoroni/pimoroni-pico/releases) did
 **not boot on a standard Pico 2 W** (`pico2_w` and even the non-wireless
-`pico2` build both hang before USB comes up — filed upstream, check for a
-fixed release before using it). Use the older, working build instead:
+`pico2` build both hung before USB came up — a missing `MICROPY_C_HEAP_SIZE`
+on these boards, per [Pimoroni's fix](https://github.com/pimoroni/pimoroni-pico/issues/1147)).
+Fixed in `v1.29.0-2` — use that or later:
 
-[`rpi_pico2_w-v1.26.1-micropython.uf2`](https://github.com/pimoroni/pimoroni-pico-rp2350/releases/download/v1.26.1/rpi_pico2_w-v1.26.1-micropython.uf2)
+[`pico2_w-v1.29.0-2-pimoroni-micropython.uf2`](https://github.com/pimoroni/pimoroni-pico/releases/download/v1.29.0-2/pico2_w-v1.29.0-2-pimoroni-micropython.uf2)
 
 To flash: hold **BOOTSEL**, plug the Pico into USB, release — it mounts as
 a drive named `RP2350`. Drag the `.uf2` file onto it; it auto-ejects and
 reboots into MicroPython once written.
 
-Note: on this build, `picounicorn` exposes a class (`from picounicorn import
-PicoUnicorn`), not the module-level functions shown in Pimoroni's current
-docs — `display.py` here is written against the confirmed, working API.
+Note: `picounicorn` exposes a class (`from picounicorn import PicoUnicorn`),
+not the module-level functions shown in Pimoroni's current docs — confirmed
+still true on `v1.29.0-2`, not just the older build. `display.py` here is
+written against the actual API on the board.
 
 ## Setup
 
