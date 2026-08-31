@@ -1,5 +1,7 @@
 import time
 
+import _thread
+
 import config
 import wifi
 from display import Display
@@ -17,7 +19,7 @@ FETCH_THROTTLE_SECONDS = getattr(config, "FETCH_THROTTLE_SECONDS", 0.5)
 
 quotes = {}
 market_open = True  # assume open until the first market-status check
-need_quotes = True  # always fetch once on startup, even if market is closed
+need_quotes = True  # startup: no data at all yet
 
 
 def dim(color):
@@ -33,7 +35,7 @@ def all_fetches_failed():
 def fetch_and_store(symbol):
     """Fetch one ticker. Doesn't declare pass/fail here — a single
     failure mid-cycle doesn't mean the whole API is down, so that call
-    is left to the display loop once every ticker's been attempted."""
+    is left to the display thread once every ticker's been attempted."""
     quotes[symbol] = fetch_quote(symbol)
     time.sleep(FETCH_THROTTLE_SECONDS)
 
@@ -41,11 +43,6 @@ def fetch_and_store(symbol):
 def refresh_quotes():
     global market_open, need_quotes
     wifi.ensure_connected()
-
-    # A refresh cycle is throttled (one request per ticker) and can take
-    # a while — keep the banner scrolling so the screen never looks
-    # blank/dead, without prematurely claiming anything about API health.
-    display.scroll_text("PICOTICKER", NEUTRAL_COLOR, speed=SCROLL_SPEED)
 
     status = fetch_market_open()
     if status is not None:
@@ -67,17 +64,17 @@ def refresh_quotes():
                 fetch_and_store(symbol)
 
 
-def run():
-    refresh_quotes()
-    last_refresh = time.ticks_ms()
+def display_loop():
+    """Runs on the second core. Cycles the display from whatever's
+    currently in `quotes`, entirely independent of the fetch loop's own
+    timing — it never blocks on network I/O, so a slow or fully-blocked
+    fetch cycle on the other core never freezes the screen."""
+    while need_quotes:
+        # No data fetched even once yet — nothing meaningful to show.
+        display.scroll_text("PICOTICKER", NEUTRAL_COLOR, speed=SCROLL_SPEED)
 
     while True:
         for symbol in config.TICKERS:
-            interval = config.QUOTE_REFRESH_INTERVAL if market_open else CLOSED_QUOTE_REFRESH_INTERVAL
-            if time.ticks_diff(time.ticks_ms(), last_refresh) >= interval * 1000:
-                refresh_quotes()
-                last_refresh = time.ticks_ms()
-
             quote = quotes.get(symbol)
             if quote is None:
                 if all_fetches_failed():
@@ -92,4 +89,18 @@ def run():
                 display.scroll_text(format_quote(symbol, price, change_percent), color, speed=SCROLL_SPEED)
 
 
-run()
+def fetch_loop():
+    """Runs on the main core: keeps `quotes` fresh in the background."""
+    refresh_quotes()
+    last_refresh = time.ticks_ms()
+
+    while True:
+        interval = config.QUOTE_REFRESH_INTERVAL if market_open else CLOSED_QUOTE_REFRESH_INTERVAL
+        if time.ticks_diff(time.ticks_ms(), last_refresh) >= interval * 1000:
+            refresh_quotes()
+            last_refresh = time.ticks_ms()
+        time.sleep(1)
+
+
+_thread.start_new_thread(display_loop, ())
+fetch_loop()
