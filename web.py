@@ -28,17 +28,27 @@ button:disabled {{ opacity: 0.5; cursor: not-allowed; }}
 </head>
 <body>
 <h1>PicoTicker</h1>
-<form method="POST" action="/tickers">
+<form method="POST" action="/tickers" id="tickerForm">
 <p>Symbols (comma-separated):</p>
 <textarea name="tickers" id="tickers" rows="4">{tickers}</textarea>
 <p id="hint">{error}</p>
 <p><button type="submit" id="save" disabled>Save</button></p>
 </form>
 <script>
+var form = document.getElementById("tickerForm");
 var textarea = document.getElementById("tickers");
 var button = document.getElementById("save");
 var hint = document.getElementById("hint");
 var initial = textarea.value;
+
+form.addEventListener("submit", function () {{
+    // Validation may involve real Finnhub lookups server-side, so the
+    // round-trip can take a few seconds — disable immediately rather
+    // than waiting for the response, so it's obvious the click landed.
+    button.disabled = true;
+    button.textContent = "Saving...";
+    hint.textContent = "";
+}});
 
 function isValidSymbol(s) {{
     return s.length >= 1 && s.length <= 6 && /^[A-Za-z.]+$/.test(s);
