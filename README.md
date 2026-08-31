@@ -1,134 +1,305 @@
 # PicoTicker
 
-A Raspberry Pi Pico 2 W stock ticker, written in MicroPython. Polls live
-quotes and scrolls them across a Pimoroni Pico Unicorn Pack (a 16x7 RGB LED
-matrix that plugs directly onto the Pico's header — no wiring needed),
-colour-coded green for up, red for down.
+A pocket-sized stock ticker built on a Raspberry Pi Pico 2 W. It scrolls
+live prices across a tiny RGB LED matrix, colour-coded green for up and
+red for down, and lets you edit which symbols it tracks from a web page
+it hosts itself — no redeploying code just to add a ticker.
 
-## Hardware
+This project doubles as a fairly complete example of a "real" MicroPython
+project: WiFi handling that survives flaky boot timing, a background web
+server, using both of the Pico 2's cores, and talking to a live financial
+API without falling over when that API (or your WiFi) misbehaves. If
+you're new to MicroPython or the Pico, the [How it works](#how-it-works)
+section walks through the reasoning behind those choices.
 
-- Raspberry Pi Pico 2 W (or Pico 2 W H) — needs WiFi, so a plain Pico 2 won't work
-- Pimoroni Pico Unicorn Pack, plugged directly onto the Pico's GPIO header
+## Table of contents
 
-## Firmware
+- [What you'll need](#what-youll-need)
+- [Setup](#setup)
+- [Using it](#using-it)
+- [How it works](#how-it-works)
+- [Project files](#project-files)
+- [Known limitations](#known-limitations)
 
-This needs **Pimoroni's own MicroPython fork** (not stock MicroPython) —
-it bundles the `picounicorn` module that drives the LED matrix.
+## What you'll need
 
-⚠️ The `v1.29.0-1` release of
-[pimoroni-pico](https://github.com/pimoroni/pimoroni-pico/releases) did
-**not boot on a standard Pico 2 W** (`pico2_w` and even the non-wireless
-`pico2` build both hung before USB came up — a missing `MICROPY_C_HEAP_SIZE`
-on these boards, per [Pimoroni's fix](https://github.com/pimoroni/pimoroni-pico/issues/1147)).
-Fixed in `v1.29.0-2` — use that or later:
+**Hardware:**
 
-[`pico2_w-v1.29.0-2-pimoroni-micropython.uf2`](https://github.com/pimoroni/pimoroni-pico/releases/download/v1.29.0-2/pico2_w-v1.29.0-2-pimoroni-micropython.uf2)
+- A **Raspberry Pi Pico 2 W** — specifically the **2 W**, not a plain
+  Pico 2 or the original Pico W. It needs both the RP2350 chip (Pico 2)
+  *and* WiFi (the "W"), and both at once — there's no combination that
+  skips one and still works here. The "H" variant (pre-soldered
+  headers) is the easiest to work with if you're new to this, since the
+  next item plugs straight onto those header pins.
+- A **[Pimoroni Pico Unicorn Pack](https://shop.pimoroni.com/products/pico-unicorn-pack)**
+  — a 16×7 RGB LED matrix with four buttons, designed to plug directly
+  onto a Pico-shaped board's header. No soldering or wiring needed.
+- A **USB cable** to both power the board and program it. The Pico's
+  micro-USB port can feel unusually stiff — that's normal for this
+  board, not a sign anything's wrong, but use a decent-quality cable;
+  a marginal one is a common source of flaky connections.
+- A **WiFi network** the board can join (2.4GHz — the Pico's WiFi chip
+  doesn't do 5GHz).
 
-To flash: hold **BOOTSEL**, plug the Pico into USB, release — it mounts as
-a drive named `RP2350`. Drag the `.uf2` file onto it; it auto-ejects and
-reboots into MicroPython once written.
+**Accounts:**
 
-Note: `picounicorn` exposes a class (`from picounicorn import PicoUnicorn`),
-not the module-level functions shown in Pimoroni's current docs — confirmed
-still true on `v1.29.0-2`, not just the older build. `display.py` here is
-written against the actual API on the board.
+- A free **[Finnhub](https://finnhub.io/)** account for an API key —
+  this is what actually supplies the stock prices. The free tier
+  (60 API calls/minute) is comfortably enough for a handful of tickers
+  refreshing once a minute; see [How it works](#being-a-good-api-citizen)
+  for how this project stays well under that limit regardless of how
+  many symbols you track.
+
+**On your computer:**
+
+- A way to copy files onto the Pico's flash storage. This guide uses
+  the serial REPL directly, but [Thonny](https://thonny.org/) (a free,
+  beginner-friendly Python IDE with built-in Pico support) is the
+  easiest option if this is your first time doing this — its "Save
+  as... Raspberry Pi Pico" makes uploading files a simple file-save
+  action.
 
 ## Setup
 
-1. Flash the firmware above.
-2. Copy `config.example.py` to `config.py` and fill in:
-   - `WIFI_SSID` / `WIFI_PASSWORD`
-   - `FINNHUB_API_KEY` — free tier key from [finnhub.io](https://finnhub.io/)
-   - `TICKERS` — starting symbols, e.g. `["AAPL", "MSFT", "TSLA"]` — this
-     is only a one-time seed (see "Editing tickers" below).
-3. Upload `boot.py`, `main.py`, `wifi.py`, `web.py`, `display.py`,
-   `font3x5.py`, `stocks.py`, and `config.py` to the root of the device
-   — easiest via [Thonny](https://thonny.org/) ("Save as... Raspberry Pi
-   Pico"), or `mpremote cp *.py :` if you have `mpremote` installed.
-4. Reset the board. It connects to WiFi, then runs fetching and display on
-   the RP2350's two separate cores (see Notes below) — each ticker starts
-   showing real data as soon as its own first fetch lands, so the matrix
-   fills in progressively rather than waiting for the whole batch.
+### 1. Flash the firmware
 
-## Editing tickers
+This board needs **Pimoroni's own MicroPython build**, not the stock
+one from micropython.org — it bundles the `picounicorn` module that
+drives the LED matrix, which isn't part of standard MicroPython.
 
-`TICKERS` in `config.py` only seeds the list once, on first boot. After
-that, the live list lives in `tickers.json` on the device and is edited
-through a small web page the board serves itself — no redeploying needed
-to add or remove symbols.
+Download the UF2 file for your board from the
+[pimoroni-pico releases page](https://github.com/pimoroni/pimoroni-pico/releases) —
+look for a filename starting with `pico2_w-`.
 
-1. **Find the board's IP**: press and hold the Unicorn Pack's **X**
-   button — the display scrolls `HTTP://<ip>` instead of the current
-   ticker. (Checked once per ticker turn, so hold it for a couple of
-   seconds rather than a quick tap.)
-2. Open that address in a browser on the same network. It shows a text
-   box with the current symbols (comma- or newline-separated).
-3. Edit and hit **Save** — it's disabled until you've actually changed
-   something and every symbol looks valid (1-6 letters/dots each).
-   Tickers are always shown/stored alphabetically sorted.
+> ⚠️ **Known bad release:** `v1.29.0-1` does not boot on a standard
+> Pico 2 W (it hangs before USB even comes up, due to a missing memory
+> setting on Pimoroni's end — see
+> [pimoroni-pico#1147](https://github.com/pimoroni/pimoroni-pico/issues/1147)).
+> It was fixed in `v1.29.0-2`. If your board seems totally unresponsive
+> after flashing — no USB device appears at all, nothing prints — this
+> is the first thing to check: make sure you're not on the broken
+> release.
 
-## Project layout
+To actually flash it:
 
-```
-boot.py       — runs once on power-up, connects to WiFi
-main.py       — fetch_loop() on the main core, display_loop() on a second
-                thread (via _thread) on the other core
-wifi.py       — shared WiFi connect/retry logic; also remembers the
-                board's IP (wifi.ip_address) once connected
-web.py        — tiny HTTP server for editing tickers, polled from
-                fetch_loop() on the main core
-display.py    — wraps picounicorn.PicoUnicorn, scrolls text across the matrix
-font3x5.py    — a minimal 3x5 pixel font (digits, A-Z, $ % + - . ^ :)
-stocks.py     — Finnhub quote fetching
-config.example.py — copy to config.py and fill in secrets (gitignored)
-tickers.json  — the live, editable ticker list (device-local, gitignored,
-                created automatically from config.TICKERS on first boot)
+1. Hold down the **BOOTSEL** button on the Pico, plug it into your
+   computer via USB, then release the button. It should appear as a
+   USB drive named `RP2350`.
+2. Drag the `.uf2` file you downloaded onto that drive. It will
+   auto-eject and reboot on its own once the write finishes — that's
+   normal, not an error.
+3. It's now running MicroPython. It won't show up as a drive anymore;
+   from now on you talk to it over a serial connection (which Thonny,
+   or any serial terminal, can do automatically once it's plugged in).
+
+### 2. Get a Finnhub API key
+
+Sign up for a free account at [finnhub.io](https://finnhub.io/) and
+copy your API key from the dashboard — you'll need it in the next step.
+
+### 3. Configure the project
+
+In this repo, copy `config.example.py` to a new file named `config.py`
+and fill in your own values:
+
+```python
+WIFI_SSID = "your-wifi-name"
+WIFI_PASSWORD = "your-wifi-password"
+FINNHUB_API_KEY = "your-finnhub-api-key"
+TICKERS = ["AAPL", "MSFT", "TSLA"]   # starting symbols — see note below
 ```
 
-## Notes
+`config.py` is gitignored on purpose, since it holds your WiFi password
+and API key — never commit it or share it publicly. `config.example.py`
+is the one that's safe to share/publish, with the rest of the tunable
+settings (refresh intervals, scroll speed, etc.) documented inline.
 
-- `config.py` is gitignored since it holds your WiFi password and API key —
-  never commit it.
-- The display keeps scrolling through `TICKERS` continuously; quotes are
-  only re-fetched from Finnhub every `QUOTE_REFRESH_INTERVAL` seconds
-  (default 60), reusing cached prices in between. This keeps scrolling
-  snappy and stays well under Finnhub's free-tier rate limit (60 calls/min)
-  no matter how long `TICKERS` gets. While the market's closed, quotes
-  aren't re-fetched at all — only the market-status check itself runs,
-  every `CLOSED_QUOTE_REFRESH_INTERVAL` seconds (default 300), so the
-  display keeps showing the last known prices until it reopens.
-- Within a refresh cycle, each ticker's fetch is spaced out by
-  `FETCH_THROTTLE_SECONDS` (default 0.5) rather than firing all of them
-  back-to-back — Finnhub is Cloudflare-fronted and occasionally returns
-  a plain-text rate-limit error instead of JSON under bursty requests,
-  even while comfortably under the per-minute quota.
-- When the market's closed (checked via Finnhub's market-status endpoint),
-  quotes still show the same green/red up/down colours, just dimmed
-  (`CLOSED_DIM_FACTOR` in `main.py`) rather than switched to a neutral
-  colour.
-- The 16x7 matrix only fits a tiny 3x5 font, so text scrolls rather than
-  displaying statically.
-- On this firmware, WiFi sometimes doesn't come up in time during `boot.py`
-  on a cold boot, even with retries — seems to need more real elapsed time
-  since power-on than `boot.py` alone gets. `wifi.ensure_connected()` is
-  also called at the top of every quote refresh in `main.py`, so it
-  self-heals within the first refresh cycle rather than getting stuck.
-- The RP2350 has two cores, and network fetching was the only thing that
-  could ever make the display freeze — `main.py` now runs `fetch_loop()`
-  on the main core and `display_loop()` on a second thread (`_thread`) on
-  the other core. The display thread never touches WiFi/sockets at all;
-  it just reads the shared `quotes` dict and drives the LED matrix, so a
-  slow or fully-blocked fetch cycle never freezes the screen. Each ticker
-  shows "PICOTICKER" only until its own first fetch completes, then
-  switches permanently to real data for that ticker — no need to wait
-  for the whole startup batch.
-- `web.py`'s server has no per-client session isolation — if two people
-  (or you and a browser tab you forgot about) edit the form around the
-  same time, changes can interleave unpredictably. Fine for a single-
-  household device, just don't expect concurrent-editing safety.
-- If you're developing against a running board over a serial REPL:
-  interrupting `fetch_loop()` (e.g. Ctrl-C) leaves the web server's
-  port-80 socket bound but unowned — resuming it with a bare
-  `fetch_loop()` call fails with `EADDRINUSE`. A full reset (soft or
-  hard) always clears it cleanly; that's the one to reach for once the
-  web server's involved.
+Note on `TICKERS`: this only seeds the list the *first* time the board
+boots. After that, the live list lives in a file on the device and is
+edited through a web page — see [Editing your ticker list](#editing-your-ticker-list).
+
+### 4. Upload the code
+
+Copy every `.py` file in this repo (`boot.py`, `main.py`, `wifi.py`,
+`web.py`, `display.py`, `font3x5.py`, `stocks.py`) plus
+your new `config.py` onto the root of the device's filesystem. With
+Thonny, open each file and use "Save as... Raspberry Pi Pico"; with
+`mpremote` installed, `mpremote cp *.py :` from this directory does it
+in one go.
+
+### 5. First boot
+
+Reset the board (unplug/replug, or a soft reset if you're in a serial
+session). Here's what happens, and what's normal:
+
+- It connects to WiFi. This can occasionally take a little longer than
+  you'd expect on the very first boot after flashing — see
+  [Known limitations](#known-limitations) if it seems stuck.
+- The display shows a scrolling "PICOTICKER" banner while it fetches
+  your first batch of quotes. Each symbol switches over to showing its
+  real price as soon as *that symbol's* fetch completes, so the matrix
+  fills in gradually rather than all at once.
+- Once running, it settles into its normal rhythm: cycling through your
+  tickers, refreshing prices roughly once a minute.
+
+## Using it
+
+### Watching the ticker
+
+Each symbol gets a turn, scrolling its price and percentage change
+(green with an up-arrow if it's risen, red with a down-arrow if it's
+fallen). While the market's closed, the same colours are used but
+dimmed, since the numbers aren't actively moving. If a symbol fails to
+fetch, it shows `SYMBOL ERROR`; if *every* symbol fails at once (a sign
+Finnhub itself is having trouble, not just one bad ticker), it shows a
+plain `API ERROR` instead.
+
+### Finding the web page
+
+Press and hold the Unicorn Pack's **X** button — the display scrolls
+`HTTP://<the board's IP address>` instead of the current ticker. (This
+is checked once per ticker turn, not continuously, so hold it for a
+second or two rather than a quick tap.) Open that address in a browser
+on the same WiFi network.
+
+### Editing your ticker list
+
+The web page shows a text box with your current symbols, comma- or
+newline-separated. Edit it and hit **Save**:
+
+- The button stays disabled until you've actually changed something
+  and every symbol looks like a plausible ticker (1–6 letters/dots).
+- Any symbol that's genuinely new gets checked against Finnhub's own
+  symbol lookup before saving — if it doesn't recognise `XYZABC` as a
+  real ticker, it'll tell you and won't save the change. This check can
+  take a few seconds per new symbol (it's a live API call), so don't
+  worry if "Saving..." sits there for a moment when adding several at
+  once.
+- Symbols are always shown and stored in alphabetical order.
+
+## How it works
+
+This section is aimed at anyone reading the code, or curious why
+certain things are built the way they are.
+
+### Two cores, two jobs
+
+The RP2350 chip on the Pico 2 has two CPU cores, and this project
+gives each one a single, clear job:
+
+- **The main core** runs `fetch_loop()` in `main.py` — it owns WiFi,
+  fetches quotes from Finnhub, and serves the ticker-editing web page.
+  All the networking lives here.
+- **The second core** runs `display_loop()`, started via
+  MicroPython's `_thread` module — it does nothing but read whatever
+  the fetch loop has most recently stored and draw it to the LED
+  matrix, on a loop, forever.
+
+The two communicate through a couple of plain shared variables (a
+dict of the latest quotes, the current ticker list) — nothing fancier
+than that. The payoff: fetching from an API is inherently unpredictable
+(slow DNS, a dropped connection, Finnhub itself being briefly down —
+all things that happened during development), but none of that can
+ever freeze the display, because the thread driving the LEDs never
+touches the network at all.
+
+### Being a good API citizen
+
+A few deliberate choices keep this well within Finnhub's free-tier
+limits (60 calls/minute) no matter how long your ticker list gets:
+
+- Quotes are cached and only re-fetched every `QUOTE_REFRESH_INTERVAL`
+  seconds (default 60) — the display just keeps cycling through
+  whatever's cached in between, rather than fetching on every scroll.
+- While the market's closed, quotes aren't re-fetched *at all* — only
+  a lightweight market-status check runs, on a much longer interval
+  (`CLOSED_QUOTE_REFRESH_INTERVAL`, default 5 minutes). There's no
+  point re-polling prices that aren't moving.
+- Within a single refresh, each ticker's request is spaced out by
+  `FETCH_THROTTLE_SECONDS` rather than firing them all back-to-back —
+  Finnhub sits behind Cloudflare, which can be sensitive to bursts of
+  requests even when you're nowhere near the actual per-minute quota.
+
+### Error handling philosophy
+
+The guiding rule: **never claim more than you actually know.** Early
+versions of this project showed a generic "API down" message the
+moment *any single* fetch failed — which turned out to be actively
+misleading the one time it mattered, when 5 of 7 tickers failed but 2
+succeeded just fine (a partial Finnhub hiccup, not an outage). Now,
+that verdict is only reached once *every* ticker has actually been
+attempted: a lone failure shows `SYMBOL ERROR`, and only a total wipeout
+shows the broader `API ERROR`.
+
+The same principle shows up in the ticker-validation flow: a failed
+Finnhub lookup (network blip, Finnhub itself misbehaving) is treated as
+*unknown*, not *invalid* — it doesn't block you from saving a ticker
+that might well be perfectly real.
+
+### The pixel font
+
+The LED matrix is only 16 pixels wide by 7 tall, which isn't enough
+room for any existing font, so `font3x5.py` defines a hand-drawn 3×5
+pixel font from scratch — just enough characters for ticker symbols,
+prices, and a handful of punctuation marks. At this resolution, even
+single letters need real thought (the `N`, for instance, went through
+three redesigns before a diagonal stroke actually read clearly at three
+pixels wide).
+
+### The web server
+
+`web.py` is a deliberately minimal HTTP server built directly on raw
+sockets — no framework, because MicroPython doesn't really have one
+worth pulling in for a single form. It's polled once per loop iteration
+from the fetch loop (a non-blocking `accept()`, so it never stalls
+fetching), handles exactly one request at a time, and keeps the
+mutable ticker list in `tickers.json` on the device's flash rather than
+in `config.py`, which stays reserved for one-time secrets and settings.
+
+## Project files
+
+```
+boot.py             — runs once on power-up, connects to WiFi
+main.py             — fetch_loop() on the main core, display_loop() on
+                       a second thread (via _thread) on the other core
+wifi.py             — WiFi connect/retry logic; also remembers the
+                       board's IP once connected
+web.py              — the ticker-editing web server
+display.py          — wraps picounicorn.PicoUnicorn, scrolls text
+font3x5.py          — the hand-drawn 3x5 pixel font
+stocks.py           — Finnhub API calls (quotes, market status, symbol lookup)
+config.example.py   — copy to config.py and fill in your own secrets
+tickers.json        — the live, editable ticker list (created automatically
+                       on first boot; not in this repo, lives on the device)
+```
+
+## Known limitations
+
+A few honest caveats, so they don't come as a surprise:
+
+- **WiFi timing on a cold boot.** Occasionally the WiFi chip needs more
+  real elapsed time after power-on than `boot.py` alone gives it, and
+  the very first connection attempt fails. This self-heals within the
+  first refresh cycle (the fetch loop retries the connection before
+  every fetch), so it recovers on its own within roughly a minute —
+  but the display will show the startup banner for a bit longer than
+  usual if this happens to you.
+- **The web server has no concurrent-editing protection.** If two
+  people (or two browser tabs) submit changes around the same time,
+  whichever request the board processes second wins, with no warning
+  that the other one was overwritten. Fine for a single-household
+  device sitting on your desk; not something to rely on for anything
+  more.
+- **`picounicorn`'s real API doesn't match Pimoroni's own docs.** Their
+  published documentation shows module-level functions
+  (`picounicorn.set_pixel(...)`); what's actually on the board is a
+  class (`from picounicorn import PicoUnicorn`). `display.py` is
+  written against what's actually there, confirmed by inspecting the
+  live module on the device rather than trusting the docs.
+- **If you're developing against a live board over a serial REPL:**
+  once the web server's running, interrupting the fetch loop (e.g.
+  Ctrl-C in Thonny) and trying to resume it directly will fail with
+  `EADDRINUSE` — the port-80 socket stays bound from the interrupted
+  run. A full reset (soft or hard) always clears it cleanly; that's
+  the one to reach for. This doesn't affect normal use, only
+  interactive development.
