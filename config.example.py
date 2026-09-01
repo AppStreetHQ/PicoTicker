@@ -30,15 +30,6 @@ CLOSED_QUOTE_REFRESH_INTERVAL = 300
 # Seconds per column-shift while scrolling text — lower is faster.
 SCROLL_SPEED = 0.13
 
-# Hours to offset NTP time (which is always UTC) by, for displaying
-# local time. This is your region's *standard* (winter) offset — e.g.
-# 0 for the UK (GMT), -5 for US Eastern (EST). MicroPython has no
-# timezone database, so it can't auto-adjust for daylight saving; when
-# your region is observing it, use the "Local time is in DST" toggle
-# on the web UI instead of editing this — it adds the extra hour
-# without needing a redeploy.
-TIMEZONE_OFFSET_HOURS = 0
-
 # Seconds between re-syncing the clock over NTP (the Pico has no
 # battery-backed RTC, so this is how it knows the time at all).
 CLOCK_RESYNC_INTERVAL = 3600
@@ -56,9 +47,20 @@ MARKET_OPEN_MINUTE = 30
 MARKET_CLOSE_HOUR = 16
 MARKET_CLOSE_MINUTE = 30
 
-# US Eastern Time's *standard* (EST, winter) offset from UTC: -5.
-# Separate from TIMEZONE_OFFSET_HOURS above (your own local display
-# time) since they're rarely the same place. When the US is observing
-# EDT, use the "US market is in DST" toggle on the web UI rather than
-# editing this — see TIMEZONE_OFFSET_HOURS above for why.
+# US Eastern Time's *standard* (EST, winter) offset from UTC: -5. This
+# is the anchor everything else (including TIMEZONE_OFFSET_FROM_MARKET_HOURS
+# below) is built from. When the US is observing EDT, use the "US
+# market is in DST" toggle on the web UI rather than editing this.
 MARKET_TIMEZONE_OFFSET_HOURS = -5
+
+# Your local standard-time offset *relative to the market's own
+# standard time* (Eastern Standard Time), not from UTC. This is a
+# fixed geographic relationship that (almost) never changes, unlike
+# an absolute UTC offset which needs revisiting every time either
+# side's daylight saving flips. E.g. the UK is 5 hours ahead of EST
+# (GMT vs EST), so a UK user sets 5; someone in the market's own zone
+# (US Eastern) sets 0; US Pacific is 3 hours behind, so -3. When your
+# own region is observing daylight saving, use the "Local time is in
+# DST" toggle on the web UI instead of editing this — it adds the
+# extra hour on your side independently of the market's own DST state.
+TIMEZONE_OFFSET_FROM_MARKET_HOURS = 5 # UK

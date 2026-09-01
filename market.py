@@ -10,8 +10,8 @@ this has no way to know about), this just decides when it's worth
 asking.
 
 MARKET_TIMEZONE_OFFSET_HOURS is Eastern Time's *standard-time* (EST)
-offset from UTC, kept separate from clock.TIMEZONE_OFFSET_HOURS (your
-own local display time) since they're rarely the same place.
+offset from UTC — the anchor clock.py's own local time is defined
+relative to (see clock.TIMEZONE_OFFSET_FROM_MARKET_HOURS).
 dst.load()["market"] (toggled from the web UI) adds the extra hour on
 top when the US is observing EDT, so the twice-yearly US daylight
 saving change doesn't need a config.py edit and redeploy either."""
