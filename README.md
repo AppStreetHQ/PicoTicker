@@ -120,8 +120,9 @@ edited through a web page — see [Editing your ticker list](#editing-your-ticke
 ### 4. Upload the code
 
 Copy every `.py` file in this repo (`boot.py`, `main.py`, `wifi.py`,
-`web.py`, `display.py`, `font3x5.py`, `stocks.py`, `clock.py`) plus
-your new `config.py` onto the root of the device's filesystem. With
+`web.py`, `display.py`, `font3x5.py`, `stocks.py`, `clock.py`,
+`market.py`) plus your new `config.py` onto the root of the device's
+filesystem. With
 Thonny, open each file and use "Save as... Raspberry Pi Pico"; with
 `mpremote` installed, `mpremote cp *.py :` from this directory does it
 in one go.
@@ -228,6 +229,16 @@ limits (60 calls/minute) no matter how long your ticker list gets:
   a lightweight market-status check runs, on a much longer interval
   (`CLOSED_QUOTE_REFRESH_INTERVAL`, default 5 minutes). There's no
   point re-polling prices that aren't moving.
+- Even that status check only runs during a padded US trading-hours
+  window (`market.py`, default 8:30am-4:30pm Eastern) — outside it
+  (nights, weekends), the market's assumed closed with no Finnhub call
+  at all. Finnhub's own answer is still what decides whether quotes
+  actually refresh (and is what catches holidays, which this window
+  has no way to know about) — this just decides when it's worth
+  asking. Needs `MARKET_TIMEZONE_OFFSET_HOURS` in `config.py` (Eastern
+  Time's offset from UTC — separate from your own `TIMEZONE_OFFSET_HOURS`,
+  since they're rarely the same place, and with the same manual
+  daylight-saving caveat: -4 for EDT, -5 for EST).
 - Within a single refresh, each ticker's request is spaced out by
   `FETCH_THROTTLE_SECONDS` rather than firing them all back-to-back —
   Finnhub sits behind Cloudflare, which can be sensitive to bursts of
@@ -282,6 +293,7 @@ display.py          — wraps picounicorn.PicoUnicorn, scrolls text
 font3x5.py          — the hand-drawn 3x5 pixel font
 stocks.py           — Finnhub API calls (quotes, market status, symbol lookup)
 clock.py            — NTP time sync and HH:MM formatting
+market.py           — local-clock gate for the Finnhub market-status check
 config.example.py   — copy to config.py and fill in your own secrets
 tickers.json        — the live, editable ticker list (created automatically
                        on first boot; not in this repo, lives on the device)

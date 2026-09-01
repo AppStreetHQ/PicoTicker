@@ -4,6 +4,7 @@ import _thread
 
 import clock
 import config
+import market
 import web
 import wifi
 from display import Display
@@ -53,9 +54,14 @@ def refresh_quotes():
     global market_open, need_quotes
     wifi.ensure_connected()
 
-    status = fetch_market_open()
-    if status is not None:
-        market_open = status  # else keep the last known state
+    if market.plausibly_open():
+        # Only ask Finnhub during a window where the market could
+        # actually be open — no point polling at 2am or on a Sunday.
+        status = fetch_market_open()
+        if status is not None:
+            market_open = status  # else keep the last known state
+    else:
+        market_open = False
 
     if market_open or need_quotes:
         # Prices are moving (or this is the first fetch ever) — refresh
@@ -137,8 +143,11 @@ def fetch_loop():
     global tickers
     server = web.start_server()
 
-    refresh_quotes()
+    # Sync first: refresh_quotes() (below) now checks market.plausibly_open(),
+    # which reads the clock — on a cold boot that clock is still at its
+    # un-synced default until this runs.
     clock.sync()
+    refresh_quotes()
     last_refresh = time.ticks_ms()
     last_clock_sync = time.ticks_ms()
 

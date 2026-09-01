@@ -40,3 +40,24 @@ TIMEZONE_OFFSET_HOURS = 0
 # Seconds between re-syncing the clock over NTP (the Pico has no
 # battery-backed RTC, so this is how it knows the time at all).
 CLOCK_RESYNC_INTERVAL = 3600
+
+# US market ("Eastern Time") trading-hours window, in Eastern local
+# time. Used to skip the Finnhub market-status check entirely outside
+# plausible market hours (nights, weekends) rather than polling it
+# every CLOSED_QUOTE_REFRESH_INTERVAL regardless. The padding either
+# side of the real 9:30am-4:00pm session is deliberate — Finnhub's own
+# status is still what decides whether quotes actually refresh (and
+# catches holidays, which this window has no way to know about), this
+# just decides when it's worth asking.
+MARKET_OPEN_HOUR = 8
+MARKET_OPEN_MINUTE = 30
+MARKET_CLOSE_HOUR = 16
+MARKET_CLOSE_MINUTE = 30
+
+# US Eastern Time's offset from UTC. Separate from TIMEZONE_OFFSET_HOURS
+# above (which is your own local display time) since they're rarely the
+# same place. Like TIMEZONE_OFFSET_HOURS, MicroPython has no timezone
+# database, so this needs manual updating for US daylight saving too:
+# -4 for EDT (mid-March to early November), -5 for EST the rest of the
+# year.
+MARKET_TIMEZONE_OFFSET_HOURS = -4
