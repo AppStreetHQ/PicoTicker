@@ -63,4 +63,4 @@ MARKET_TIMEZONE_OFFSET_HOURS = -5
 # own region is observing daylight saving, use the "Local time is in
 # DST" toggle on the web UI instead of editing this — it adds the
 # extra hour on your side independently of the market's own DST state.
-TIMEZONE_OFFSET_FROM_MARKET_HOURS = 5 # UK
+TIMEZONE_OFFSET_FROM_MARKET_HOURS = 0
