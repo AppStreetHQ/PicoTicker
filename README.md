@@ -12,7 +12,9 @@ API without falling over when that API (or your WiFi) misbehaves. If
 you're new to MicroPython or the Pico, the [How it works](#how-it-works)
 section walks through the reasoning behind those choices.
 
-[Watch a short demo](https://raw.githubusercontent.com/AppStreetHQ/PicoTicker/main/media/demo.mp4)
+[Watch a short demo](media/demo.mp4) — click "View raw" on GitHub's
+file-too-big-to-preview page to actually play it (a hard limit of
+GitHub's own file viewer, not this repo).
 
 ## Table of contents
 
