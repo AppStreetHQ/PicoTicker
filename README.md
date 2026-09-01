@@ -12,7 +12,7 @@ API without falling over when that API (or your WiFi) misbehaves. If
 you're new to MicroPython or the Pico, the [How it works](#how-it-works)
 section walks through the reasoning behind those choices.
 
-<video src="https://raw.githubusercontent.com/AppStreetHQ/PicoTicker/main/media/demo.mp4" controls muted playsinline width="280"></video>
+[Watch a short demo](https://raw.githubusercontent.com/AppStreetHQ/PicoTicker/main/media/demo.mp4)
 
 ## Table of contents
 
