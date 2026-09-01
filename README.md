@@ -120,7 +120,7 @@ edited through a web page — see [Editing your ticker list](#editing-your-ticke
 ### 4. Upload the code
 
 Copy every `.py` file in this repo (`boot.py`, `main.py`, `wifi.py`,
-`web.py`, `display.py`, `font3x5.py`, `stocks.py`) plus
+`web.py`, `display.py`, `font3x5.py`, `stocks.py`, `clock.py`) plus
 your new `config.py` onto the root of the device's filesystem. With
 Thonny, open each file and use "Save as... Raspberry Pi Pico"; with
 `mpremote` installed, `mpremote cp *.py :` from this directory does it
@@ -161,6 +161,18 @@ is checked once per ticker turn, not continuously, so hold it for a
 second or two rather than a quick tap.) Open that address in a browser
 on the same WiFi network.
 
+### Checking the time
+
+Press and hold **Y** the same way to scroll the current time (24-hour,
+`HH:MM`) instead of the current ticker. The board has no
+battery-backed real-time clock, so it gets the time over NTP on boot
+and resyncs hourly (`CLOCK_RESYNC_INTERVAL` in `config.py`) — expect
+it to read all-zero or wrong for a few seconds right after power-up,
+before the first sync completes. There's no timezone database on
+MicroPython either, so what you see is UTC plus a fixed manual offset
+you set yourself via `TIMEZONE_OFFSET_HOURS` — it won't shift itself
+for daylight saving.
+
 ### Editing your ticker list
 
 The web page shows a text box with your current symbols, comma- or
@@ -187,8 +199,8 @@ The RP2350 chip on the Pico 2 has two CPU cores, and this project
 gives each one a single, clear job:
 
 - **The main core** runs `fetch_loop()` in `main.py` — it owns WiFi,
-  fetches quotes from Finnhub, and serves the ticker-editing web page.
-  All the networking lives here.
+  fetches quotes from Finnhub, resyncs the clock over NTP, and serves
+  the ticker-editing web page. All the networking lives here.
 - **The second core** runs `display_loop()`, started via
   MicroPython's `_thread` module — it does nothing but read whatever
   the fetch loop has most recently stored and draw it to the LED
@@ -267,6 +279,7 @@ web.py              — the ticker-editing web server
 display.py          — wraps picounicorn.PicoUnicorn, scrolls text
 font3x5.py          — the hand-drawn 3x5 pixel font
 stocks.py           — Finnhub API calls (quotes, market status, symbol lookup)
+clock.py            — NTP time sync and HH:MM formatting
 config.example.py   — copy to config.py and fill in your own secrets
 tickers.json        — the live, editable ticker list (created automatically
                        on first boot; not in this repo, lives on the device)
