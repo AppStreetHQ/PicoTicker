@@ -80,7 +80,7 @@ def _render_ticker(symbol):
         return
 
     if display.pu.is_pressed(display.pu.BUTTON_Y):
-        display.scroll_text("TIME " + clock.now_string(), NEUTRAL_COLOR, speed=SCROLL_SPEED)
+        display.scroll_text(clock.now_string(), NEUTRAL_COLOR, speed=SCROLL_SPEED)
         return
 
     if symbol not in quotes:

@@ -163,8 +163,10 @@ on the same WiFi network.
 
 ### Checking the time
 
-Press and hold **Y** the same way to scroll the current time (24-hour,
-`HH:MM`) instead of the current ticker. The board has no
+Press and hold **Y** the same way to scroll the current date and time
+(UK format, `DD/MM/YYYY HH:MM`, 24-hour) instead of the current
+ticker — shown only while you're holding the button, not cycled
+continuously, hence the date alongside the time. The board has no
 battery-backed real-time clock, so it gets the time over NTP on boot
 and resyncs hourly (`CLOCK_RESYNC_INTERVAL` in `config.py`) — expect
 it to read all-zero or wrong for a few seconds right after power-up,

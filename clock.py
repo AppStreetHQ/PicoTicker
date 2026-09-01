@@ -24,6 +24,9 @@ def sync():
 
 
 def now_string():
-    """Current local time as HH:MM, using TIMEZONE_OFFSET_HOURS."""
+    """Current local date and time as DD/MM/YYYY HH:MM (UK format),
+    using TIMEZONE_OFFSET_HOURS. Shown only on demand (holding the Y
+    button), not cycled continuously, so it includes the date rather
+    than just the time."""
     local = time.localtime(time.time() + TIMEZONE_OFFSET_HOURS * 3600)
-    return "{:02d}:{:02d}".format(local[3], local[4])
+    return "{:02d}/{:02d}/{:04d} {:02d}:{:02d}".format(local[2], local[1], local[0], local[3], local[4])
