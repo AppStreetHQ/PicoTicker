@@ -12,6 +12,8 @@ API without falling over when that API (or your WiFi) misbehaves. If
 you're new to MicroPython or the Pico, the [How it works](#how-it-works)
 section walks through the reasoning behind those choices.
 
+[Watch a short demo](media/demo.mp4)
+
 ## Table of contents
 
 - [What you'll need](#what-youll-need)
@@ -325,6 +327,7 @@ tickers.json        — the live, editable ticker list (created automatically
                        on first boot; not in this repo, lives on the device)
 dst.json            — the two DST toggle states (same as above — created
                        automatically, not in this repo)
+media/demo.mp4      — short demo video, linked at the top of this README
 ```
 
 ## Known limitations
