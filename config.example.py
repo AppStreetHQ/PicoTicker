@@ -31,10 +31,12 @@ CLOSED_QUOTE_REFRESH_INTERVAL = 300
 SCROLL_SPEED = 0.13
 
 # Hours to offset NTP time (which is always UTC) by, for displaying
-# local time. E.g. -5 for US Eastern Standard Time, 1 for UK British
-# Summer Time. MicroPython has no timezone database, so this doesn't
-# auto-adjust for daylight saving — update it yourself if your region
-# observes it.
+# local time. This is your region's *standard* (winter) offset — e.g.
+# 0 for the UK (GMT), -5 for US Eastern (EST). MicroPython has no
+# timezone database, so it can't auto-adjust for daylight saving; when
+# your region is observing it, use the "Local time is in DST" toggle
+# on the web UI instead of editing this — it adds the extra hour
+# without needing a redeploy.
 TIMEZONE_OFFSET_HOURS = 0
 
 # Seconds between re-syncing the clock over NTP (the Pico has no
@@ -54,10 +56,9 @@ MARKET_OPEN_MINUTE = 30
 MARKET_CLOSE_HOUR = 16
 MARKET_CLOSE_MINUTE = 30
 
-# US Eastern Time's offset from UTC. Separate from TIMEZONE_OFFSET_HOURS
-# above (which is your own local display time) since they're rarely the
-# same place. Like TIMEZONE_OFFSET_HOURS, MicroPython has no timezone
-# database, so this needs manual updating for US daylight saving too:
-# -4 for EDT (mid-March to early November), -5 for EST the rest of the
-# year.
-MARKET_TIMEZONE_OFFSET_HOURS = -4
+# US Eastern Time's *standard* (EST, winter) offset from UTC: -5.
+# Separate from TIMEZONE_OFFSET_HOURS above (your own local display
+# time) since they're rarely the same place. When the US is observing
+# EDT, use the "US market is in DST" toggle on the web UI rather than
+# editing this — see TIMEZONE_OFFSET_HOURS above for why.
+MARKET_TIMEZONE_OFFSET_HOURS = -5

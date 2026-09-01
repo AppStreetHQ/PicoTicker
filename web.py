@@ -8,6 +8,7 @@ import socket
 import time
 
 import config
+import dst
 from stocks import symbol_exists
 
 TICKERS_FILE = "tickers.json"
@@ -33,6 +34,16 @@ button:disabled {{ opacity: 0.5; cursor: not-allowed; }}
 <textarea name="tickers" id="tickers" rows="4">{tickers}</textarea>
 <p id="hint">{error}</p>
 <p><button type="submit" id="save" disabled>Save</button></p>
+</form>
+<hr>
+<h2>Daylight saving</h2>
+<p>MicroPython has no timezone database, so these need flipping by
+hand when your region's clocks change — no redeploy needed, just
+toggle and save.</p>
+<form method="POST" action="/dst">
+<p><label><input type="checkbox" name="local_dst" {local_dst_checked}> Local time is in DST (e.g. UK BST)</label></p>
+<p><label><input type="checkbox" name="market_dst" {market_dst_checked}> US market is in DST (EDT)</label></p>
+<p><button type="submit">Save</button></p>
 </form>
 <script>
 var form = document.getElementById("tickerForm");
@@ -153,6 +164,16 @@ def _validation_error(new_tickers, current_tickers):
     return ""
 
 
+def _render_page(tickers, error):
+    state = dst.load()
+    return PAGE_TEMPLATE.format(
+        tickers=", ".join(tickers),
+        error=error,
+        local_dst_checked="checked" if state["local"] else "",
+        market_dst_checked="checked" if state["market"] else "",
+    ).encode()
+
+
 def poll(server_socket, tickers):
     """Check for one pending request and handle it if there is one.
     Returns the (possibly updated) tickers list. Safe to call every
@@ -182,15 +203,19 @@ def poll(server_socket, tickers):
             new_tickers = _parse_tickers_field(fields.get("tickers", ""))
             error = _validation_error(new_tickers, tickers)
             if error:
-                page = PAGE_TEMPLATE.format(tickers=", ".join(new_tickers), error=error).encode()
-                conn.send(b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n" + page)
+                conn.send(b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n" + _render_page(new_tickers, error))
             else:
                 tickers = new_tickers
                 save_tickers(tickers)
                 conn.send(b"HTTP/1.1 303 See Other\r\nLocation: /\r\n\r\n")
+        elif method == "POST" and path == "/dst":
+            # Unchecked checkboxes aren't submitted at all by the
+            # browser, so presence in the form fields *is* the value.
+            fields = _parse_form(body)
+            dst.save("local_dst" in fields, "market_dst" in fields)
+            conn.send(b"HTTP/1.1 303 See Other\r\nLocation: /\r\n\r\n")
         else:
-            page = PAGE_TEMPLATE.format(tickers=", ".join(tickers), error="").encode()
-            conn.send(b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n" + page)
+            conn.send(b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n" + _render_page(tickers, ""))
     except Exception as exc:
         print("web request failed", exc)
     finally:

@@ -1,5 +1,6 @@
 config.py
 tickers.json
+dst.json
 __pycache__/
 *.pyc
 .DS_Store

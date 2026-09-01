@@ -121,8 +121,8 @@ edited through a web page — see [Editing your ticker list](#editing-your-ticke
 
 Copy every `.py` file in this repo (`boot.py`, `main.py`, `wifi.py`,
 `web.py`, `display.py`, `font3x5.py`, `stocks.py`, `clock.py`,
-`market.py`) plus your new `config.py` onto the root of the device's
-filesystem. With
+`market.py`, `dst.py`) plus your new `config.py` onto the root of the
+device's filesystem. With
 Thonny, open each file and use "Save as... Raspberry Pi Pico"; with
 `mpremote` installed, `mpremote cp *.py :` from this directory does it
 in one go.
@@ -172,9 +172,9 @@ battery-backed real-time clock, so it gets the time over NTP on boot
 and resyncs hourly (`CLOCK_RESYNC_INTERVAL` in `config.py`) — expect
 it to read all-zero or wrong for a few seconds right after power-up,
 before the first sync completes. There's no timezone database on
-MicroPython either, so what you see is UTC plus a fixed manual offset
-you set yourself via `TIMEZONE_OFFSET_HOURS` — it won't shift itself
-for daylight saving.
+MicroPython, so `TIMEZONE_OFFSET_HOURS` in `config.py` is a fixed
+*standard-time* offset from UTC — see [Daylight saving](#daylight-saving)
+below for how the actual +1 hour gets applied without a redeploy.
 
 ### Editing your ticker list
 
@@ -190,6 +190,21 @@ newline-separated. Edit it and hit **Save**:
   worry if "Saving..." sits there for a moment when adding several at
   once.
 - Symbols are always shown and stored in alphabetical order.
+
+### Daylight saving
+
+The same web page has two checkboxes further down — "Local time is in
+DST" and "US market is in DST" — for the two clocks this project
+cares about (see [Checking the time](#checking-the-time) and
+[Being a good API citizen](#being-a-good-api-citizen)). Since
+MicroPython has no timezone database, it can't work out on its own
+when your region's clocks change; toggle the relevant box and hit
+Save, and the extra hour applies immediately, no redeploy needed.
+`config.py`'s `TIMEZONE_OFFSET_HOURS` and `MARKET_TIMEZONE_OFFSET_HOURS`
+only need setting once, to your region's *standard* (winter) offset —
+these two toggles are the only thing that should change through the
+year. The two are independent because the UK and the US don't
+necessarily flip their clocks on the same date.
 
 ## How it works
 
@@ -235,10 +250,10 @@ limits (60 calls/minute) no matter how long your ticker list gets:
   at all. Finnhub's own answer is still what decides whether quotes
   actually refresh (and is what catches holidays, which this window
   has no way to know about) — this just decides when it's worth
-  asking. Needs `MARKET_TIMEZONE_OFFSET_HOURS` in `config.py` (Eastern
-  Time's offset from UTC — separate from your own `TIMEZONE_OFFSET_HOURS`,
-  since they're rarely the same place, and with the same manual
-  daylight-saving caveat: -4 for EDT, -5 for EST).
+  asking. Needs `MARKET_TIMEZONE_OFFSET_HOURS` in `config.py` — Eastern
+  Time's *standard* (EST) offset from UTC, separate from your own
+  `TIMEZONE_OFFSET_HOURS` since they're rarely the same place; see
+  [Daylight saving](#daylight-saving) for the EDT half of the year.
 - Within a single refresh, each ticker's request is spaced out by
   `FETCH_THROTTLE_SECONDS` rather than firing them all back-to-back —
   Finnhub sits behind Cloudflare, which can be sensitive to bursts of
@@ -274,11 +289,12 @@ pixels wide).
 
 `web.py` is a deliberately minimal HTTP server built directly on raw
 sockets — no framework, because MicroPython doesn't really have one
-worth pulling in for a single form. It's polled once per loop iteration
-from the fetch loop (a non-blocking `accept()`, so it never stalls
-fetching), handles exactly one request at a time, and keeps the
-mutable ticker list in `tickers.json` on the device's flash rather than
-in `config.py`, which stays reserved for one-time secrets and settings.
+worth pulling in for a couple of forms. It's polled once per loop
+iteration from the fetch loop (a non-blocking `accept()`, so it never
+stalls fetching), handles exactly one request at a time, and keeps
+the mutable ticker list (`tickers.json`) and DST toggles (`dst.json`)
+on the device's flash rather than in `config.py`, which stays
+reserved for one-time secrets and settings.
 
 ## Project files
 
@@ -294,9 +310,12 @@ font3x5.py          — the hand-drawn 3x5 pixel font
 stocks.py           — Finnhub API calls (quotes, market status, symbol lookup)
 clock.py            — NTP time sync and HH:MM formatting
 market.py           — local-clock gate for the Finnhub market-status check
+dst.py              — persisted DST toggle state, edited from the web UI
 config.example.py   — copy to config.py and fill in your own secrets
 tickers.json        — the live, editable ticker list (created automatically
                        on first boot; not in this repo, lives on the device)
+dst.json            — the two DST toggle states (same as above — created
+                       automatically, not in this repo)
 ```
 
 ## Known limitations
