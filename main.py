@@ -2,6 +2,7 @@ import time
 
 import _thread
 
+import clock
 import config
 import web
 import wifi
@@ -17,6 +18,7 @@ CLOSED_DIM_FACTOR = 0.35
 SCROLL_SPEED = getattr(config, "SCROLL_SPEED", 0.14)
 CLOSED_QUOTE_REFRESH_INTERVAL = getattr(config, "CLOSED_QUOTE_REFRESH_INTERVAL", 300)
 FETCH_THROTTLE_SECONDS = getattr(config, "FETCH_THROTTLE_SECONDS", 0.5)
+CLOCK_RESYNC_INTERVAL = getattr(config, "CLOCK_RESYNC_INTERVAL", 3600)
 
 # The mutable, live ticker list — seeded once from config.TICKERS on
 # first boot, then persisted to tickers.json and editable via the web
@@ -77,6 +79,10 @@ def _render_ticker(symbol):
         display.scroll_text("HTTP://" + ip, NEUTRAL_COLOR, speed=SCROLL_SPEED)
         return
 
+    if display.pu.is_pressed(display.pu.BUTTON_Y):
+        display.scroll_text("TIME " + clock.now_string(), NEUTRAL_COLOR, speed=SCROLL_SPEED)
+        return
+
     if symbol not in quotes:
         # Not attempted yet (startup) — nothing to show for this one
         # specifically, others may already have real data.
@@ -105,7 +111,8 @@ def display_loop():
     starts showing real data as soon as its own first fetch lands,
     rather than waiting for the whole startup batch to finish. Holding
     the Unicorn Pack's X button shows the board's IP address instead,
-    so the web UI (for editing TICKERS) is easy to find.
+    so the web UI (for editing TICKERS) is easy to find; holding Y
+    shows the current time instead.
 
     Each ticker's render is wrapped in a try/except: an uncaught
     exception on this thread doesn't print a visible traceback the way
@@ -123,20 +130,26 @@ def display_loop():
 
 
 def fetch_loop():
-    """Runs on the main core: keeps `quotes` fresh, and polls the ticker-
-    editing web server — both stay on this thread since it's the one
-    that already safely owns the network stack."""
+    """Runs on the main core: keeps `quotes` fresh, resyncs the clock
+    over NTP, and polls the ticker-editing web server — all three stay
+    on this thread since it's the one that already safely owns the
+    network stack."""
     global tickers
     server = web.start_server()
 
     refresh_quotes()
+    clock.sync()
     last_refresh = time.ticks_ms()
+    last_clock_sync = time.ticks_ms()
 
     while True:
         interval = config.QUOTE_REFRESH_INTERVAL if market_open else CLOSED_QUOTE_REFRESH_INTERVAL
         if time.ticks_diff(time.ticks_ms(), last_refresh) >= interval * 1000:
             refresh_quotes()
             last_refresh = time.ticks_ms()
+        if time.ticks_diff(time.ticks_ms(), last_clock_sync) >= CLOCK_RESYNC_INTERVAL * 1000:
+            clock.sync()
+            last_clock_sync = time.ticks_ms()
         tickers = web.poll(server, tickers)
         time.sleep(1)
 

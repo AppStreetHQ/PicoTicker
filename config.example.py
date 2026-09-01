@@ -29,3 +29,14 @@ CLOSED_QUOTE_REFRESH_INTERVAL = 300
 
 # Seconds per column-shift while scrolling text — lower is faster.
 SCROLL_SPEED = 0.13
+
+# Hours to offset NTP time (which is always UTC) by, for displaying
+# local time. E.g. -5 for US Eastern Standard Time, 1 for UK British
+# Summer Time. MicroPython has no timezone database, so this doesn't
+# auto-adjust for daylight saving — update it yourself if your region
+# observes it.
+TIMEZONE_OFFSET_HOURS = 0
+
+# Seconds between re-syncing the clock over NTP (the Pico has no
+# battery-backed RTC, so this is how it knows the time at all).
+CLOCK_RESYNC_INTERVAL = 3600
