@@ -46,15 +46,21 @@ CLOCK_RESYNC_INTERVAL = 3600
 # US market ("Eastern Time") trading-hours window, in Eastern local
 # time. Used to skip the Finnhub market-status check entirely outside
 # plausible market hours (nights, weekends) rather than polling it
-# every CLOSED_QUOTE_REFRESH_INTERVAL regardless. The padding either
-# side of the real 9:30am-4:00pm session is deliberate — Finnhub's own
-# status is still what decides whether quotes actually refresh (and
-# catches holidays, which this window has no way to know about), this
-# just decides when it's worth asking.
-MARKET_OPEN_HOUR = 8
-MARKET_OPEN_MINUTE = 30
+# every CLOSED_QUOTE_REFRESH_INTERVAL regardless. A symmetric 30-minute
+# padding either side of the real 9:30am-4:00pm session is deliberate —
+# Finnhub's own status is still what decides whether quotes actually
+# refresh (and catches holidays, which this window has no way to know
+# about), this just decides when it's worth asking.
+MARKET_OPEN_HOUR = 9
+MARKET_OPEN_MINUTE = 0
 MARKET_CLOSE_HOUR = 16
 MARKET_CLOSE_MINUTE = 30
+
+# Seconds between market-status checks while closed but still inside
+# the trading-hours window above — tighter than CLOSED_QUOTE_REFRESH_INTERVAL
+# so a market open (or, near the close, an early close) gets noticed
+# quickly rather than waiting up to 5 minutes for the next check.
+MARKET_WINDOW_REFRESH_INTERVAL = 120
 
 # US Eastern Time's *standard* (EST, winter) offset from UTC: -5.
 # Separate from TIMEZONE_OFFSET_HOURS above (your own local display

@@ -18,6 +18,7 @@ NEUTRAL_COLOR = (200, 200, 200)
 CLOSED_DIM_FACTOR = 0.35
 SCROLL_SPEED = getattr(config, "SCROLL_SPEED", 0.14)
 CLOSED_QUOTE_REFRESH_INTERVAL = getattr(config, "CLOSED_QUOTE_REFRESH_INTERVAL", 300)
+MARKET_WINDOW_REFRESH_INTERVAL = getattr(config, "MARKET_WINDOW_REFRESH_INTERVAL", 120)
 FETCH_THROTTLE_SECONDS = getattr(config, "FETCH_THROTTLE_SECONDS", 0.5)
 CLOCK_RESYNC_INTERVAL = getattr(config, "CLOCK_RESYNC_INTERVAL", 3600)
 
@@ -164,7 +165,15 @@ def fetch_loop():
     last_clock_sync = time.ticks_ms()
 
     while True:
-        interval = config.QUOTE_REFRESH_INTERVAL if market_open else CLOSED_QUOTE_REFRESH_INTERVAL
+        if market_open:
+            interval = config.QUOTE_REFRESH_INTERVAL
+        elif market.plausibly_open():
+            # Closed, but within the window where it could open any
+            # moment — check more eagerly than the general closed
+            # cadence so the transition to open gets caught quickly.
+            interval = MARKET_WINDOW_REFRESH_INTERVAL
+        else:
+            interval = CLOSED_QUOTE_REFRESH_INTERVAL
         if time.ticks_diff(time.ticks_ms(), last_refresh) >= interval * 1000:
             refresh_quotes()
             last_refresh = time.ticks_ms()

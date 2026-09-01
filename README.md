@@ -256,13 +256,17 @@ limits (60 calls/minute) no matter how long your ticker list gets:
   a lightweight market-status check runs, on a much longer interval
   (`CLOSED_QUOTE_REFRESH_INTERVAL`, default 5 minutes). There's no
   point re-polling prices that aren't moving.
-- Even that status check only runs during a padded US trading-hours
-  window (`market.py`, default 8:30am-4:30pm Eastern) — outside it
+- That status check only runs at all during a padded US trading-hours
+  window (`market.py`, default 9:00am-4:30pm Eastern) — outside it
   (nights, weekends), the market's assumed closed with no Finnhub call
-  at all. Finnhub's own answer is still what decides whether quotes
-  actually refresh (and is what catches holidays, which this window
-  has no way to know about) — this just decides when it's worth
-  asking. Needs `MARKET_TIMEZONE_OFFSET_HOURS` in `config.py` — Eastern
+  at all. Inside the window but still closed (i.e. waiting for the
+  open), it checks on a tighter cadence instead
+  (`MARKET_WINDOW_REFRESH_INTERVAL`, default 2 minutes) so the open
+  gets noticed quickly rather than waiting up to 5 minutes. Finnhub's
+  own answer is still what decides whether quotes actually refresh
+  (and is what catches holidays, which this window has no way to know
+  about) — this just decides when and how often it's worth asking.
+  Needs `MARKET_TIMEZONE_OFFSET_HOURS` in `config.py` — Eastern
   Time's *standard* (EST) offset from UTC, separate from your own
   `TIMEZONE_OFFSET_HOURS` since they're rarely the same place; see
   [Daylight saving](#daylight-saving) for the EDT half of the year.
