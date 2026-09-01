@@ -172,11 +172,9 @@ battery-backed real-time clock, so it gets the time over NTP on boot
 and resyncs hourly (`CLOCK_RESYNC_INTERVAL` in `config.py`) — expect
 it to read all-zero or wrong for a few seconds right after power-up,
 before the first sync completes. There's no timezone database on
-MicroPython, so `TIMEZONE_OFFSET_FROM_MARKET_HOURS` in `config.py` is
-a fixed *standard-time* offset from the US market's own time zone
-(not UTC — see [Being a good API citizen](#being-a-good-api-citizen))
-— see [Daylight saving](#daylight-saving) below for how the actual +1
-hour gets applied without a redeploy.
+MicroPython, so `TIMEZONE_OFFSET_HOURS` in `config.py` is a fixed
+*standard-time* offset from UTC — see [Daylight saving](#daylight-saving)
+below for how the actual +1 hour gets applied without a redeploy.
 
 ### Editing your ticker list
 
@@ -202,12 +200,11 @@ cares about (see [Checking the time](#checking-the-time) and
 MicroPython has no timezone database, it can't work out on its own
 when your region's clocks change; toggle the relevant box and hit
 Save, and the extra hour applies immediately, no redeploy needed.
-`config.py`'s `MARKET_TIMEZONE_OFFSET_HOURS` and
-`TIMEZONE_OFFSET_FROM_MARKET_HOURS` only need setting once, to your
-region's *standard* (winter) offset — these two toggles are the only
-thing that should change through the year. The two are independent
-because the UK and the US don't necessarily flip their clocks on the
-same date.
+`config.py`'s `TIMEZONE_OFFSET_HOURS` and `MARKET_TIMEZONE_OFFSET_HOURS`
+only need setting once, to your region's *standard* (winter) offset —
+these two toggles are the only thing that should change through the
+year. The two are independent because the UK and the US don't
+necessarily flip their clocks on the same date.
 
 ## How it works
 
@@ -254,11 +251,8 @@ limits (60 calls/minute) no matter how long your ticker list gets:
   actually refresh (and is what catches holidays, which this window
   has no way to know about) — this just decides when it's worth
   asking. Needs `MARKET_TIMEZONE_OFFSET_HOURS` in `config.py` — Eastern
-  Time's *standard* (EST) offset from UTC. This also anchors your own
-  local time: `TIMEZONE_OFFSET_FROM_MARKET_HOURS` is set relative to
-  the market rather than to UTC directly (e.g. 5 for the UK, since
-  GMT is 5 hours ahead of EST) — a fixed geographic relationship, so
-  it doesn't need revisiting when either side's clocks change; see
+  Time's *standard* (EST) offset from UTC, separate from your own
+  `TIMEZONE_OFFSET_HOURS` since they're rarely the same place; see
   [Daylight saving](#daylight-saving) for the EDT half of the year.
 - Within a single refresh, each ticker's request is spaced out by
   `FETCH_THROTTLE_SECONDS` rather than firing them all back-to-back —
