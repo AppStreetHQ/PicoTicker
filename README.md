@@ -34,10 +34,17 @@ section walks through the reasoning behind those choices.
 - A **[Pimoroni Pico Unicorn Pack](https://shop.pimoroni.com/products/pico-unicorn-pack)**
   — a 16×7 RGB LED matrix with four buttons, designed to plug directly
   onto a Pico-shaped board's header. No soldering or wiring needed.
-- A **USB cable** to both power the board and program it. The Pico's
-  micro-USB port can feel unusually stiff — that's normal for this
-  board, not a sign anything's wrong, but use a decent-quality cable;
-  a marginal one is a common source of flaky connections.
+- A **USB cable that supports data, not just power.** This trips people
+  up a lot: many cheap or bundled micro-USB cables (especially ones
+  meant for charging phones) only carry power, not data — the board
+  will happily light up and draw power from one, then never show up as
+  a drive or serial device, which looks exactly like a dead board or
+  bad firmware but isn't. If nothing appears on your computer at all
+  after flashing, trying a different cable is worth doing before
+  anything else. The Pico's micro-USB port can also feel unusually
+  stiff — that's normal for this board, not a sign anything's wrong —
+  but use a decent-quality cable regardless, since a marginal one is a
+  common source of flaky connections too.
 - A **WiFi network** the board can join (2.4GHz — the Pico's WiFi chip
   doesn't do 5GHz).
 
