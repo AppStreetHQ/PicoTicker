@@ -29,6 +29,7 @@ tickers = web.load_tickers(getattr(config, "TICKERS", []))
 quotes = {}
 market_open = True  # assume open until the first market-status check
 need_quotes = True  # startup: no data at all yet
+clock_sync_requested = False  # set by the display thread, consumed by fetch_loop
 
 
 def dim(color):
@@ -86,6 +87,13 @@ def _render_ticker(symbol):
         return
 
     if display.pu.is_pressed(display.pu.BUTTON_Y):
+        # This thread never touches the network itself (see
+        # display_loop()'s docstring) — flag a resync for fetch_loop to
+        # pick up instead of syncing here. Shows whatever's currently
+        # cached this frame; a fresher reading follows within about a
+        # second, in time for later frames if Y is still held.
+        global clock_sync_requested
+        clock_sync_requested = True
         display.scroll_text(clock.now_string(), NEUTRAL_COLOR, speed=SCROLL_SPEED)
         return
 
@@ -118,7 +126,9 @@ def display_loop():
     rather than waiting for the whole startup batch to finish. Holding
     the Unicorn Pack's X button shows the board's IP address instead,
     so the web UI (for editing TICKERS) is easy to find; holding Y
-    shows the current time instead.
+    shows the current time instead, and also flags a fresh NTP resync
+    (this thread can't do that itself — see fetch_loop()) so drift
+    since the last scheduled sync doesn't show up in the reading.
 
     Each ticker's render is wrapped in a try/except: an uncaught
     exception on this thread doesn't print a visible traceback the way
@@ -137,10 +147,12 @@ def display_loop():
 
 def fetch_loop():
     """Runs on the main core: keeps `quotes` fresh, resyncs the clock
-    over NTP, and polls the ticker-editing web server — all three stay
-    on this thread since it's the one that already safely owns the
-    network stack."""
-    global tickers
+    over NTP (both on its own schedule and on demand, whenever the
+    display thread flags clock_sync_requested — see _render_ticker()),
+    and polls the ticker-editing web server — all three stay on this
+    thread since it's the one that already safely owns the network
+    stack."""
+    global tickers, clock_sync_requested
     server = web.start_server()
 
     # Sync first: refresh_quotes() (below) now checks market.plausibly_open(),
@@ -156,8 +168,9 @@ def fetch_loop():
         if time.ticks_diff(time.ticks_ms(), last_refresh) >= interval * 1000:
             refresh_quotes()
             last_refresh = time.ticks_ms()
-        if time.ticks_diff(time.ticks_ms(), last_clock_sync) >= CLOCK_RESYNC_INTERVAL * 1000:
+        if clock_sync_requested or time.ticks_diff(time.ticks_ms(), last_clock_sync) >= CLOCK_RESYNC_INTERVAL * 1000:
             clock.sync()
+            clock_sync_requested = False
             last_clock_sync = time.ticks_ms()
         tickers = web.poll(server, tickers)
         time.sleep(1)

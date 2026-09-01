@@ -169,12 +169,18 @@ Press and hold **Y** the same way to scroll the current date and time
 ticker — shown only while you're holding the button, not cycled
 continuously, hence the date alongside the time. The board has no
 battery-backed real-time clock, so it gets the time over NTP on boot
-and resyncs hourly (`CLOCK_RESYNC_INTERVAL` in `config.py`) — expect
-it to read all-zero or wrong for a few seconds right after power-up,
-before the first sync completes. There's no timezone database on
-MicroPython, so `TIMEZONE_OFFSET_HOURS` in `config.py` is a fixed
-*standard-time* offset from UTC — see [Daylight saving](#daylight-saving)
-below for how the actual +1 hour gets applied without a redeploy.
+and resyncs hourly (`CLOCK_RESYNC_INTERVAL` in `config.py`), plus an
+extra resync the moment you press Y — cheap RTC crystals on this
+hardware can drift more than you'd expect within an hour, so holding
+Y also queues up a fresh sync rather than trusting whatever the last
+scheduled one left behind. The very first press after a fresh boot
+still just shows whatever the clock currently has (possibly all-zero
+or wrong, before the first sync completes); subsequent presses while
+still held pick up the newly-synced time. There's no timezone
+database on MicroPython, so `TIMEZONE_OFFSET_HOURS` in `config.py` is
+a fixed *standard-time* offset from UTC — see
+[Daylight saving](#daylight-saving) below for how the actual +1 hour
+gets applied without a redeploy.
 
 ### Editing your ticker list
 
@@ -225,12 +231,15 @@ gives each one a single, clear job:
   matrix, on a loop, forever.
 
 The two communicate through a couple of plain shared variables (a
-dict of the latest quotes, the current ticker list) — nothing fancier
-than that. The payoff: fetching from an API is inherently unpredictable
-(slow DNS, a dropped connection, Finnhub itself being briefly down —
-all things that happened during development), but none of that can
-ever freeze the display, because the thread driving the LEDs never
-touches the network at all.
+dict of the latest quotes, the current ticker list, a
+`clock_sync_requested` flag the display thread sets on a Y press for
+the fetch loop to act on) — nothing fancier than that. The payoff:
+fetching from an API is inherently unpredictable (slow DNS, a dropped
+connection, Finnhub itself being briefly down — all things that
+happened during development), but none of that can ever freeze the
+display, because the thread driving the LEDs never touches the
+network at all — even wanting a fresh clock sync has to go through
+this same flag rather than calling NTP directly.
 
 ### Being a good API citizen
 
