@@ -67,18 +67,10 @@ This board needs **Pimoroni's own MicroPython build**, not the stock
 one from micropython.org — it bundles the `picounicorn` module that
 drives the LED matrix, which isn't part of standard MicroPython.
 
-Download the UF2 file for your board from the
-[pimoroni-pico releases page](https://github.com/pimoroni/pimoroni-pico/releases) —
-look for a filename starting with `pico2_w-`.
-
-> ⚠️ **Known bad release:** `v1.29.0-1` does not boot on a standard
-> Pico 2 W (it hangs before USB even comes up, due to a missing memory
-> setting on Pimoroni's end — see
-> [pimoroni-pico#1147](https://github.com/pimoroni/pimoroni-pico/issues/1147)).
-> It was fixed in `v1.29.0-2`. If your board seems totally unresponsive
-> after flashing — no USB device appears at all, nothing prints — this
-> is the first thing to check: make sure you're not on the broken
-> release.
+Download this UF2 file:
+[`pico2_w-v1.29.0-2-pimoroni-micropython.uf2`](https://github.com/pimoroni/pimoroni-pico/releases/download/v1.29.0-2/pico2_w-v1.29.0-2-pimoroni-micropython.uf2)
+(or a newer release than `v1.29.0-2`, if one's since come out — see the
+[pimoroni-pico releases page](https://github.com/pimoroni/pimoroni-pico/releases)).
 
 To actually flash it:
 
