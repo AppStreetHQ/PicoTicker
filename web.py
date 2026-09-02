@@ -174,6 +174,35 @@ def _render_page(tickers, error):
     ).encode()
 
 
+def _recv_request(conn):
+    """Read a full HTTP request. Browsers commonly send the POST body in a
+    TCP segment separate from the headers, so a single recv() isn't
+    guaranteed to capture it — keep reading until the header/body
+    separator has arrived, then keep reading the body until it matches
+    Content-Length."""
+    data = b""
+    while b"\r\n\r\n" not in data:
+        chunk = conn.recv(2048)
+        if not chunk:
+            return data
+        data += chunk
+
+    header, sep, body = data.partition(b"\r\n\r\n")
+    content_length = 0
+    for line in header.split(b"\r\n"):
+        if line.lower().startswith(b"content-length:"):
+            content_length = int(line.split(b":", 1)[1].strip())
+            break
+
+    while len(body) < content_length:
+        chunk = conn.recv(2048)
+        if not chunk:
+            break
+        body += chunk
+
+    return header + sep + body
+
+
 def poll(server_socket, tickers):
     """Check for one pending request and handle it if there is one.
     Returns the (possibly updated) tickers list. Safe to call every
@@ -190,7 +219,7 @@ def poll(server_socket, tickers):
     conn.settimeout(2)
 
     try:
-        request = conn.recv(2048)
+        request = _recv_request(conn)
         if not request:
             return tickers
         request = request.decode()
