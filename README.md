@@ -367,6 +367,21 @@ Finnhub lookup (network blip, Finnhub itself misbehaving) is treated as
 *unknown*, not *invalid* — it doesn't block you from saving a ticker
 that might well be perfectly real.
 
+It also shows up structurally, not just in what's displayed: both
+`display_loop()` and `fetch_loop()` wrap their entire per-iteration
+body in a broad `try`/`except`. An uncaught exception on either
+thread doesn't print a traceback the way a genuine crash does — it
+just silently kills that one thread. On `display_loop()` that freezes
+the screen blank with no diagnostic; on `fetch_loop()` it's worse and
+easier to miss, since `display_loop()` keeps running independently on
+whatever `quotes`/`market_open`/the web server were last set to —
+the display looks alive, just frozen (still showing "market open"
+colours long after the close, say, since nothing's updating
+`market_open` any more). A WiFi hiccup or a dropped websocket
+mid-subscribe are real risks over hours of runtime, not just
+hypothetical, so both loops log and move on to the next iteration
+instead of letting one failure take the whole thread down with it.
+
 ### The pixel font
 
 The LED matrix is only 16 pixels wide by 7 tall, which isn't enough

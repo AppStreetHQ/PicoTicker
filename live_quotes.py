@@ -86,17 +86,26 @@ def disconnect():
 def sync_tickers(tickers, poll_web=None):
     """Subscribe newly-added tickers and unsubscribe removed ones —
     called whenever the web UI changes the ticker list. No-op while
-    disconnected; connect() picks up the current list from scratch."""
+    disconnected; connect() picks up the current list from scratch.
+    If a subscribe/unsubscribe write fails (the connection dropped
+    between poll() calls), disconnects rather than leaving _subscribed
+    partially updated — the next poll() cycle reconnects and
+    resubscribes everything fresh from the current ticker list, so
+    nothing here needs its own retry logic."""
     global _subscribed
     if _socket is None:
         return
     wanted = set(tickers)
-    for symbol in wanted - _subscribed:
-        _seed_prev_close([symbol], poll_web)
-        _socket.subscribe(symbol)
-    for symbol in _subscribed - wanted:
-        _socket.unsubscribe(symbol)
-    _subscribed = wanted
+    try:
+        for symbol in wanted - _subscribed:
+            _seed_prev_close([symbol], poll_web)
+            _socket.subscribe(symbol)
+        for symbol in _subscribed - wanted:
+            _socket.unsubscribe(symbol)
+        _subscribed = wanted
+    except Exception as exc:
+        print("live_quotes sync_tickers failed", exc)
+        disconnect()
 
 
 def poll(tickers, quotes, poll_web=None):

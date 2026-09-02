@@ -238,58 +238,80 @@ def fetch_loop():
 
     # Sync first: refresh_quotes() (below) now checks market.plausibly_open(),
     # which reads the clock — on a cold boot that clock is still at its
-    # un-synced default until this runs.
-    clock.sync()
-    refresh_quotes()
+    # un-synced default until this runs. Wrapped the same as the main
+    # loop below and for the same reason: a boot-time WiFi hiccup here
+    # must not be able to kill this thread before the loop (and its own
+    # retry-on-the-next-interval healing) ever gets a chance to run.
+    try:
+        clock.sync()
+        refresh_quotes()
+    except Exception as exc:
+        print("fetch_loop error (startup)", exc)
     last_refresh = time.ticks_ms()
     last_clock_sync = time.ticks_ms()
 
     while True:
-        if market_open:
-            interval = config.QUOTE_REFRESH_INTERVAL
-        elif market.plausibly_open():
-            # Closed, but within the window where it could open any
-            # moment — check more eagerly than the general closed
-            # cadence so the transition to open gets caught quickly.
-            interval = MARKET_WINDOW_REFRESH_INTERVAL
-        else:
-            interval = CLOSED_QUOTE_REFRESH_INTERVAL
-        if time.ticks_diff(time.ticks_ms(), last_refresh) >= interval * 1000:
-            refresh_quotes()
-            last_refresh = time.ticks_ms()
-        if clock_sync_requested or time.ticks_diff(time.ticks_ms(), last_clock_sync) >= CLOCK_RESYNC_INTERVAL * 1000:
-            clock.sync()
-            clock_sync_requested = False
-            last_clock_sync = time.ticks_ms()
+        try:
+            if market_open:
+                interval = config.QUOTE_REFRESH_INTERVAL
+            elif market.plausibly_open():
+                # Closed, but within the window where it could open any
+                # moment — check more eagerly than the general closed
+                # cadence so the transition to open gets caught quickly.
+                interval = MARKET_WINDOW_REFRESH_INTERVAL
+            else:
+                interval = CLOSED_QUOTE_REFRESH_INTERVAL
+            if time.ticks_diff(time.ticks_ms(), last_refresh) >= interval * 1000:
+                refresh_quotes()
+                last_refresh = time.ticks_ms()
+            if clock_sync_requested or time.ticks_diff(time.ticks_ms(), last_clock_sync) >= CLOCK_RESYNC_INTERVAL * 1000:
+                clock.sync()
+                clock_sync_requested = False
+                last_clock_sync = time.ticks_ms()
 
-        if live_toggle_requested:
-            quote_mode.save(not quote_mode.load())
-            live_toggle_requested = False
+            if live_toggle_requested:
+                quote_mode.save(not quote_mode.load())
+                live_toggle_requested = False
 
-        # Reconciled every iteration (not just on refresh_quotes()'s own
-        # longer timer) so both a market-open/closed transition and a
-        # quote_mode change (web UI or Button A) take effect within
-        # about a second, not up to QUOTE_REFRESH_INTERVAL later.
-        # connect()/disconnect() are both cheap no-ops when already in
-        # the state they're asking for. Closing immediately on leaving
-        # live mode (rather than leaving it connected until the next
-        # market check) is what lets a second PicoTicker on the same
-        # Finnhub key switch to live mode right away, instead of
-        # waiting for this one's connection to go stale.
-        live_mode = quote_mode.load() and market_open
-        if live_mode:
-            live_quotes.connect(tickers, poll_web=_service_web)
-            live_quotes.poll(tickers, quotes, poll_web=_service_web)
-        else:
-            live_quotes.disconnect()
+            # Reconciled every iteration (not just on refresh_quotes()'s
+            # own longer timer) so both a market-open/closed transition
+            # and a quote_mode change (web UI or Button A) take effect
+            # within about a second, not up to QUOTE_REFRESH_INTERVAL
+            # later. connect()/disconnect() are both cheap no-ops when
+            # already in the state they're asking for. Closing
+            # immediately on leaving live mode (rather than leaving it
+            # connected until the next market check) is what lets a
+            # second PicoTicker on the same Finnhub key switch to live
+            # mode right away, instead of waiting for this one's
+            # connection to go stale.
+            live_mode = quote_mode.load() and market_open
+            if live_mode:
+                live_quotes.connect(tickers, poll_web=_service_web)
+                live_quotes.poll(tickers, quotes, poll_web=_service_web)
+            else:
+                live_quotes.disconnect()
 
-        # sync_tickers() is a no-op while disconnected, so this doesn't
-        # need its own live_mode check — same reasoning as _service_web()
-        # calling it unconditionally above.
-        new_tickers = web.poll(server, tickers)
-        if new_tickers != tickers:
-            live_quotes.sync_tickers(new_tickers, poll_web=_service_web)
-        tickers = new_tickers
+            # sync_tickers() is a no-op while disconnected, so this
+            # doesn't need its own live_mode check — same reasoning as
+            # _service_web() calling it unconditionally above.
+            new_tickers = web.poll(server, tickers)
+            if new_tickers != tickers:
+                live_quotes.sync_tickers(new_tickers, poll_web=_service_web)
+            tickers = new_tickers
+        except Exception as exc:
+            # Mirrors display_loop()'s per-ticker try/except and for the
+            # same reason: an uncaught exception here doesn't print a
+            # traceback the way a genuine crash does — it just silently
+            # kills this whole thread, freezing quotes/market_open/the
+            # web server at whatever they last were (display_loop keeps
+            # running independently, showing that frozen state forever
+            # with no diagnostic — e.g. still "market open" colours long
+            # after the close, since nothing's updating market_open any
+            # more). A WiFi hiccup or a dropped websocket mid-subscribe
+            # are real, not just hypothetical — this is the same
+            # never-let-one-failure-take-down-everything philosophy the
+            # rest of this project already follows (see README).
+            print("fetch_loop error", exc)
         time.sleep(1)
 
 

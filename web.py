@@ -231,13 +231,15 @@ def poll(server_socket, tickers):
     except OSError:
         return tickers  # nothing pending
 
-    # The listening socket is non-blocking (for accept()), but that mode
-    # carries over to accepted connections too — recv() would fail
-    # instantly with EAGAIN if the request hasn't fully arrived yet.
-    # Give this one connection a real (short) blocking timeout instead.
-    conn.settimeout(2)
-
     try:
+        # The listening socket is non-blocking (for accept()), but that
+        # mode carries over to accepted connections too — recv() would
+        # fail instantly with EAGAIN if the request hasn't fully
+        # arrived yet. Give this one connection a real (short) blocking
+        # timeout instead. Inside the try (not before it) so a failure
+        # here still hits the finally below and closes the connection,
+        # rather than leaking it.
+        conn.settimeout(2)
         request = _recv_request(conn)
         if not request:
             return tickers
