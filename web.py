@@ -9,10 +9,12 @@ import time
 
 import config
 import dst
+import quote_mode
 from stocks import symbol_exists
 
 TICKERS_FILE = "tickers.json"
 FETCH_THROTTLE_SECONDS = getattr(config, "FETCH_THROTTLE_SECONDS", 0.5)
+MAX_TICKERS = 50  # Finnhub's free-tier websocket subscription limit
 
 PAGE_TEMPLATE = r"""<!DOCTYPE html>
 <html>
@@ -30,7 +32,7 @@ button:disabled {{ opacity: 0.5; cursor: not-allowed; }}
 <body>
 <h1>PicoTicker</h1>
 <form method="POST" action="/tickers" id="tickerForm">
-<p>Symbols (comma-separated):</p>
+<p>Symbols (comma-separated, up to {max_tickers}):</p>
 <textarea name="tickers" id="tickers" rows="4">{tickers}</textarea>
 <p id="hint">{error}</p>
 <p><button type="submit" id="save" disabled>Save</button></p>
@@ -43,6 +45,18 @@ toggle and save.</p>
 <form method="POST" action="/dst">
 <p><label><input type="checkbox" name="local_dst" {local_dst_checked}> Local time is in DST (e.g. UK BST)</label></p>
 <p><label><input type="checkbox" name="market_dst" {market_dst_checked}> US market is in DST (EDT)</label></p>
+<p><button type="submit">Save</button></p>
+</form>
+<hr>
+<h2>Price source</h2>
+<p>Live prices stream in real time from Finnhub's websocket feed, but
+Finnhub only allows <strong>one open connection per API key</strong> —
+if more than one PicoTicker shares your key, only one should use the
+websocket at a time. REST fetches on a timer instead and never
+competes for that connection, so it's the safer choice if you're
+running more than one device.</p>
+<form method="POST" action="/quote-mode">
+<p><label><input type="checkbox" name="live" {live_checked}> Use live websocket prices</label></p>
 <p><button type="submit">Save</button></p>
 </form>
 <script>
@@ -75,6 +89,7 @@ function validate(value) {{
         count++;
     }}
     if (count === 0) {{ return "Enter at least one symbol"; }}
+    if (count > {max_tickers}) {{ return "Too many symbols (max {max_tickers})"; }}
     return "";
 }}
 
@@ -151,6 +166,8 @@ def _validation_error(new_tickers, current_tickers):
     tell "invalid" from "Finnhub's having trouble right now"."""
     if not new_tickers:
         return "Enter at least one symbol"
+    if len(new_tickers) > MAX_TICKERS:
+        return "Too many symbols (max {})".format(MAX_TICKERS)
 
     unknown = [t for t in new_tickers if t not in current_tickers]
     bad = []
@@ -171,6 +188,8 @@ def _render_page(tickers, error):
         error=error,
         local_dst_checked="checked" if state["local"] else "",
         market_dst_checked="checked" if state["market"] else "",
+        live_checked="checked" if quote_mode.load() else "",
+        max_tickers=MAX_TICKERS,
     ).encode()
 
 
@@ -232,7 +251,7 @@ def poll(server_socket, tickers):
             new_tickers = _parse_tickers_field(fields.get("tickers", ""))
             error = _validation_error(new_tickers, tickers)
             if error:
-                conn.send(b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n" + _render_page(new_tickers, error))
+                conn.send(b"HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n\r\n" + _render_page(new_tickers, error))
             else:
                 tickers = new_tickers
                 save_tickers(tickers)
@@ -243,8 +262,12 @@ def poll(server_socket, tickers):
             fields = _parse_form(body)
             dst.save("local_dst" in fields, "market_dst" in fields)
             conn.send(b"HTTP/1.1 303 See Other\r\nLocation: /\r\n\r\n")
+        elif method == "POST" and path == "/quote-mode":
+            fields = _parse_form(body)
+            quote_mode.save("live" in fields)
+            conn.send(b"HTTP/1.1 303 See Other\r\nLocation: /\r\n\r\n")
         else:
-            conn.send(b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n" + _render_page(tickers, ""))
+            conn.send(b"HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n\r\n" + _render_page(tickers, ""))
     except Exception as exc:
         print("web request failed", exc)
     finally:

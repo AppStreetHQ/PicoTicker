@@ -7,13 +7,21 @@ MARKET_STATUS_URL = "https://finnhub.io/api/v1/stock/market-status"
 SEARCH_URL = "https://finnhub.io/api/v1/search"
 
 
-def fetch_quote(symbol):
-    """Return (price, change_percent) for a symbol, or None on failure."""
+def _fetch_quote_json(symbol):
     url = "{}?symbol={}&token={}".format(QUOTE_URL, symbol, config.FINNHUB_API_KEY)
     response = None
     try:
         response = urequests.get(url)
-        data = response.json()
+        return response.json()
+    finally:
+        if response is not None:
+            response.close()
+
+
+def fetch_quote(symbol):
+    """Return (price, change_percent) for a symbol, or None on failure."""
+    try:
+        data = _fetch_quote_json(symbol)
         price = data.get("c")
         prev_close = data.get("pc")
         if not price or not prev_close:
@@ -23,9 +31,20 @@ def fetch_quote(symbol):
     except Exception as exc:
         print("fetch_quote failed for", symbol, exc)
         return None
-    finally:
-        if response is not None:
-            response.close()
+
+
+def fetch_prev_close(symbol):
+    """Return just the previous close for a symbol, or None on failure.
+    Used to seed live_quotes' % change baseline — the trades websocket
+    only ever streams a raw price, never a prev-close to compare it
+    against."""
+    try:
+        data = _fetch_quote_json(symbol)
+        prev_close = data.get("pc")
+        return prev_close if prev_close else None
+    except Exception as exc:
+        print("fetch_prev_close failed for", symbol, exc)
+        return None
 
 
 def fetch_market_open():

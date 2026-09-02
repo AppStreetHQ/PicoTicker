@@ -10,11 +10,32 @@ FINNHUB_API_KEY = "your-finnhub-api-key"
 # Symbols to cycle through on the display
 TICKERS = ["AAPL", "GOOGL", "MSFT", "NVDA", "RKLB", "SPCX", "QQQ"]
 
-# Seconds between re-fetching quotes from Finnhub. The display keeps
-# scrolling through TICKERS continuously between refreshes, reusing the
-# last-fetched prices — this is what keeps you under Finnhub's free-tier
-# rate limit (60 calls/min) regardless of how long TICKERS gets.
+# Finnhub only allows one open websocket connection per API key — so if
+# you're running more than one PicoTicker on the same key, only one of
+# them should use live prices at a time, or they'll fight over that
+# connection. This is only the *initial* setting, for a device that's
+# never had its price source touched: the web UI's "Price source"
+# section and Button A both flip a persisted, on-device override
+# (quote_mode.json) that takes precedence over this from then on.
+# Defaults to REST specifically so a freshly-flashed device never
+# competes with one you've already nominated for live prices — set
+# this True on the one device you actually want them on, or leave it
+# False everywhere and use the web UI/Button A to choose per device.
+USE_LIVE_QUOTES = False
+
+# In live mode, prices update from the websocket, not REST polling —
+# this interval just controls how often the open/closed market-status
+# REST check re-runs (and, incidentally, how often the websocket
+# connection is confirmed still open). In REST mode, this is the REST
+# refresh interval itself. Either way, while closed, quotes aren't
+# moving at all, so this doesn't apply — see CLOSED_QUOTE_REFRESH_INTERVAL
+# below instead.
 QUOTE_REFRESH_INTERVAL = 60
+
+# Seconds to wait before retrying the trades websocket after it drops
+# (Wi-Fi blip, Finnhub restarting the connection, etc) — a backoff so a
+# persistent outage doesn't retry every second.
+STREAM_RECONNECT_BACKOFF_SECONDS = 15
 
 # Seconds to wait between each ticker's fetch within a single refresh
 # cycle. Without this, fetching a long TICKERS list fires every request

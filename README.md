@@ -54,11 +54,12 @@ play it inline, so click "View raw" on the page that opens.
 **Accounts:**
 
 - A free **[Finnhub](https://finnhub.io/)** account for an API key —
-  this is what actually supplies the stock prices. The free tier
-  (60 API calls/minute) is comfortably enough for a handful of tickers
-  refreshing once a minute; see [How it works](#being-a-good-api-citizen)
-  for how this project stays well under that limit regardless of how
-  many symbols you track.
+  this is what actually supplies the stock prices, live, over a
+  websocket connection (real-time trades are included on the free
+  tier, for up to 50 symbols — comfortably more than you'd ever put on
+  a 16-pixel-wide display); see
+  [How it works](#being-a-good-api-citizen) for the handful of REST
+  calls it still makes alongside that stream.
 
 **On your computer:**
 
@@ -143,7 +144,8 @@ session). Here's what happens, and what's normal:
   real price as soon as *that symbol's* fetch completes, so the matrix
   fills in gradually rather than all at once.
 - Once running, it settles into its normal rhythm: cycling through your
-  tickers, refreshing prices roughly once a minute.
+  tickers, with prices updating live as trades happen while the
+  market's open (see [How it works](#being-a-good-api-citizen)).
 
 ## Using it
 
@@ -199,6 +201,19 @@ newline-separated. Edit it and hit **Save**:
   worry if "Saving..." sits there for a moment when adding several at
   once.
 - Symbols are always shown and stored in alphabetical order.
+- Capped at 50 symbols — the limit on Finnhub's free-tier websocket
+  feed (see [Choosing REST or live prices](#choosing-rest-or-live-prices)),
+  enforced here regardless of which price source you're currently on.
+
+### Switching price source
+
+Press **A** once (a quick press, not held like X/Y) to flip between
+REST and live websocket prices — the display scrolls the mode you've
+just switched *to* (`REST API` or `WEBSOCKETS`) once, as confirmation.
+The same setting is also on the web page, under "Price source"; both
+write to the same place, so whichever you use last is what sticks. See
+[Choosing REST or live prices](#choosing-rest-or-live-prices) for why
+you'd want either one.
 
 ### Daylight saving
 
@@ -244,18 +259,77 @@ display, because the thread driving the LEDs never touches the
 network at all — even wanting a fresh clock sync has to go through
 this same flag rather than calling NTP directly.
 
+### Live prices, via websocket
+
+While the market's open, prices come from Finnhub's real-time trades
+websocket (`finnhub_ws.py`, orchestrated by `live_quotes.py`) rather
+than repeated REST polling — the board opens one connection, subscribes
+to your tickers, and updates `quotes` the moment each trade arrives.
+MicroPython has no built-in websocket client, so `finnhub_ws.py` hand-
+rolls just enough of RFC 6455 to talk to Finnhub specifically; its
+module docstring covers a couple of non-obvious `ssl` socket quirks on
+this port that shaped how it reads data.
+
+A trade only carries a raw price, not a percentage change, so
+`live_quotes.py` fetches each symbol's previous close once via REST
+(the same `/quote` endpoint `stocks.py` already used) the first time
+it's subscribed, and recomputes the percentage against that cached
+baseline on every trade. If the connection drops (WiFi blip, Finnhub
+restarting it), it reconnects automatically after
+`STREAM_RECONNECT_BACKOFF_SECONDS` (default 15) rather than hammering
+retries.
+
+### Choosing REST or live prices
+
+Finnhub only allows **one open websocket connection per API key** — so
+if you're running more than one PicoTicker on the same key, only one
+of them should actually be in live mode at a time, or they'll keep
+bumping each other off the connection. REST mode never competes for
+it, which is why it's the default (`config.py`'s `USE_LIVE_QUOTES`,
+itself defaulting to `False`).
+
+The price source is a single persisted setting (`quote_mode.json`),
+editable two ways that both write to the same place, not two
+independent toggles that could drift apart:
+
+- **The web UI's "Price source" section** — a checkbox, saved like the
+  DST toggles.
+- **Button A** — a single press (not held, unlike X/Y) flips it
+  immediately and scrolls the resulting mode's name (`REST API` or
+  `WEBSOCKETS`) once as feedback. The actual switch happens on the
+  fetch loop's own thread, same as every other network-touching
+  action in this project — see [Two cores, two jobs](#two-cores-two-jobs).
+
+`config.py`'s `USE_LIVE_QUOTES` only matters before `quote_mode.json`
+exists at all (a freshly-flashed device) — once the mode's been set
+either way, that file is authoritative, the same relationship
+`config.py`'s `TICKERS` has with `tickers.json`.
+
+Switching *out* of live mode closes the websocket connection
+immediately (within about a second — see `fetch_loop()`), rather than
+leaving it open until the next scheduled check. That's deliberate: it's
+what lets a second PicoTicker take over that connection right away
+instead of waiting for this one's to go stale on its own.
+
+Live prices are also capped at 50 tickers (Finnhub's free-tier
+websocket subscription limit) — the web UI enforces this the same way
+it enforces valid symbol formatting, whether or not you're currently
+in live mode.
+
 ### Being a good API citizen
 
-A few deliberate choices keep this well within Finnhub's free-tier
-limits (60 calls/minute) no matter how long your ticker list gets:
+A few deliberate choices keep the REST side of this well within
+Finnhub's free-tier limits (60 calls/minute, 50 symbols on the
+websocket) no matter how long your ticker list gets:
 
-- Quotes are cached and only re-fetched every `QUOTE_REFRESH_INTERVAL`
-  seconds (default 60) — the display just keeps cycling through
-  whatever's cached in between, rather than fetching on every scroll.
-- While the market's closed, quotes aren't re-fetched *at all* — only
-  a lightweight market-status check runs, on a much longer interval
-  (`CLOSED_QUOTE_REFRESH_INTERVAL`, default 5 minutes). There's no
-  point re-polling prices that aren't moving.
+- While the market's closed, no trades happen for the websocket to
+  report, so quotes fall back to REST — but still aren't re-fetched
+  *unless* a previous fetch failed (self-healing a transient blip
+  rather than re-polling prices that aren't moving anyway). A
+  lightweight market-status check still runs on its own longer
+  interval (`CLOSED_QUOTE_REFRESH_INTERVAL`, default 5 minutes) so the
+  board notices when the market reopens and switches back to the
+  websocket.
 - That status check only runs at all during a padded US trading-hours
   window (`market.py`, default 9:00am-4:30pm Eastern) — outside it
   (nights, weekends), the market's assumed closed with no Finnhub call
@@ -270,10 +344,12 @@ limits (60 calls/minute) no matter how long your ticker list gets:
   Time's *standard* (EST) offset from UTC, separate from your own
   `TIMEZONE_OFFSET_HOURS` since they're rarely the same place; see
   [Daylight saving](#daylight-saving) for the EDT half of the year.
-- Within a single refresh, each ticker's request is spaced out by
-  `FETCH_THROTTLE_SECONDS` rather than firing them all back-to-back —
-  Finnhub sits behind Cloudflare, which can be sensitive to bursts of
-  requests even when you're nowhere near the actual per-minute quota.
+- Within a single batch of REST calls (the initial seed at boot, a
+  closed-market retry, or seeding previous-close baselines), each
+  ticker's request is spaced out by `FETCH_THROTTLE_SECONDS` rather
+  than firing them all back-to-back — Finnhub sits behind Cloudflare,
+  which can be sensitive to bursts of requests even when you're
+  nowhere near the actual per-minute quota.
 
 ### Error handling philosophy
 
@@ -308,9 +384,20 @@ sockets — no framework, because MicroPython doesn't really have one
 worth pulling in for a couple of forms. It's polled once per loop
 iteration from the fetch loop (a non-blocking `accept()`, so it never
 stalls fetching), handles exactly one request at a time, and keeps
-the mutable ticker list (`tickers.json`) and DST toggles (`dst.json`)
-on the device's flash rather than in `config.py`, which stays
-reserved for one-time secrets and settings.
+the mutable ticker list (`tickers.json`), DST toggles (`dst.json`),
+and price-source setting (`quote_mode.json`) on the device's flash
+rather than in `config.py`, which stays reserved for one-time secrets
+and settings.
+
+It's also polled more often than that whenever `main.py` is in the
+middle of a slow multi-ticker REST operation — a `refresh_quotes()`
+pass, or `live_quotes.py` seeding previous-close baselines — since
+each of those is one REST call per ticker with a throttled pause in
+between, all on this same thread as the web server. `main.py`'s
+`_service_web()` polls the web server repeatedly across each of those
+pauses instead of just sleeping through them, so a page load or a
+Save doesn't have to wait out however many tickers are left in that
+pass — just the current one's REST call.
 
 ## Project files
 
@@ -323,7 +410,13 @@ wifi.py             — WiFi connect/retry logic; also remembers the
 web.py              — the ticker-editing web server
 display.py          — wraps picounicorn.PicoUnicorn, scrolls text
 font3x5.py          — the hand-drawn 3x5 pixel font
-stocks.py           — Finnhub API calls (quotes, market status, symbol lookup)
+stocks.py           — Finnhub REST API calls (quotes, market status, symbol lookup)
+finnhub_ws.py       — hand-rolled websocket client (RFC 6455) for Finnhub's
+                       real-time trades stream
+live_quotes.py      — connects/subscribes the trades stream and turns
+                       incoming trades into live quotes
+quote_mode.py       — persisted REST-vs-live toggle, edited from the web
+                       UI or Button A
 clock.py            — NTP time sync and HH:MM formatting
 market.py           — local-clock gate for the Finnhub market-status check
 dst.py              — persisted DST toggle state, edited from the web UI
@@ -332,6 +425,9 @@ tickers.json        — the live, editable ticker list (created automatically
                        on first boot; not in this repo, lives on the device)
 dst.json            — the two DST toggle states (same as above — created
                        automatically, not in this repo)
+quote_mode.json     — the REST-vs-live setting (created the first time
+                       you save one from the web UI or press Button A;
+                       not in this repo, lives on the device)
 media/demo.mp4      — short demo video, linked at the top of this README
 ```
 

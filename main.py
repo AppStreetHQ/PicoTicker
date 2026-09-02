@@ -4,7 +4,9 @@ import _thread
 
 import clock
 import config
+import live_quotes
 import market
+import quote_mode
 import web
 import wifi
 from display import Display
@@ -31,6 +33,8 @@ quotes = {}
 market_open = True  # assume open until the first market-status check
 need_quotes = True  # startup: no data at all yet
 clock_sync_requested = False  # set by the display thread, consumed by fetch_loop
+live_toggle_requested = False  # set by the display thread (Button A), consumed by fetch_loop
+server = None  # set once in fetch_loop(); module-level so _service_web() can reach it too
 
 
 def dim(color):
@@ -44,15 +48,50 @@ def all_fetches_failed():
     return len(quotes) == len(tickers) and all(v is None for v in quotes.values())
 
 
+def _service_web(seconds):
+    """Keeps the web UI responsive during a slow multi-ticker REST
+    operation — a refresh_quotes() pass, or live_quotes seeding
+    previous-close baselines for every ticker — by polling the web
+    server repeatedly across what would otherwise be one blind sleep().
+    Both of those run sequentially, one REST call per ticker, on this
+    same thread as the web server; without this, a POST or a page load
+    would just sit there for the whole multi-ticker operation (which,
+    at FETCH_THROTTLE_SECONDS alone, is several seconds before REST
+    latency even factors in) instead of at most this one throttle
+    wait — which is exactly the "web page goes unresponsive for a
+    while" symptom this was written to fix."""
+    global tickers
+    deadline = time.ticks_add(time.ticks_ms(), int(seconds * 1000))
+    while time.ticks_diff(deadline, time.ticks_ms()) > 0:
+        new_tickers = web.poll(server, tickers)
+        if new_tickers != tickers:
+            # sync_tickers() is a no-op while disconnected, so this is
+            # safe to call unconditionally rather than needing to know
+            # whether live mode happens to be active right now.
+            live_quotes.sync_tickers(new_tickers)
+            tickers = new_tickers
+        time.sleep_ms(50)
+
+
 def fetch_and_store(symbol):
     """Fetch one ticker. Doesn't declare pass/fail here — a single
     failure mid-cycle doesn't mean the whole API is down, so that call
     is left to the display thread once every ticker's been attempted."""
     quotes[symbol] = fetch_quote(symbol)
-    time.sleep(FETCH_THROTTLE_SECONDS)
+    _service_web(FETCH_THROTTLE_SECONDS)
 
 
 def refresh_quotes():
+    """Refreshes market-open status, and keeps `quotes` populated via
+    REST. In live mode (see quote_mode.py), the websocket stream is
+    what actually keeps prices moving while the market's open — that
+    connection is managed every fetch_loop() iteration, not here, so
+    it reacts immediately to the market opening/closing or the price
+    source being switched, rather than waiting for this function's own
+    longer refresh interval. In REST mode, or whenever the market's
+    closed (no trades for the websocket to report, live mode or not),
+    this is the only source of truth, exactly as before live prices
+    existed."""
     global market_open, need_quotes
     wifi.ensure_connected()
 
@@ -65,12 +104,18 @@ def refresh_quotes():
     else:
         market_open = False
 
-    if market_open or need_quotes:
-        # Prices are moving (or this is the first fetch ever) — refresh
-        # every ticker.
+    if need_quotes:
+        # First run ever — seed every ticker via REST so the display has
+        # something to show immediately, regardless of open/closed.
         for symbol in tickers:
             fetch_and_store(symbol)
         need_quotes = False
+
+    if market_open:
+        if not quote_mode.load():
+            # REST mode — nothing else refreshes prices while open.
+            for symbol in tickers:
+                fetch_and_store(symbol)
     else:
         # Closed, and we already have a baseline — don't re-fetch tickers
         # that already succeeded, but do retry ones that failed, so a
@@ -81,7 +126,36 @@ def refresh_quotes():
                 fetch_and_store(symbol)
 
 
+_button_a_was_pressed = False
+
+
+def _check_mode_toggle_button():
+    """Edge-detected, unlike the level-triggered X/Y checks below —
+    Button A should flip the price source exactly once per physical
+    press, not repeatedly for as long as it's held. Shows the
+    resulting mode name once as immediate feedback. The actual switch
+    (and, if leaving live mode, closing the websocket) happens on the
+    fetch loop's thread instead — see live_toggle_requested in
+    fetch_loop() — since this thread never touches the network (or,
+    for the same cross-thread-safety reason, live_quotes' own state)
+    directly; reading quote_mode's persisted file here is safe, since
+    it's just local flash I/O, not a networked or shared-state write."""
+    global _button_a_was_pressed, live_toggle_requested
+    pressed = display.pu.is_pressed(display.pu.BUTTON_A)
+    just_pressed = pressed and not _button_a_was_pressed
+    _button_a_was_pressed = pressed
+    if not just_pressed:
+        return False
+    live_toggle_requested = True
+    label = "REST API" if quote_mode.load() else "WEBSOCKETS"
+    display.scroll_text(label, NEUTRAL_COLOR, speed=SCROLL_SPEED)
+    return True
+
+
 def _render_ticker(symbol):
+    if _check_mode_toggle_button():
+        return
+
     if display.pu.is_pressed(display.pu.BUTTON_X):
         ip = wifi.ip_address or "NO WIFI"
         display.scroll_text("HTTP://" + ip, NEUTRAL_COLOR, speed=SCROLL_SPEED)
@@ -130,6 +204,9 @@ def display_loop():
     shows the current time instead, and also flags a fresh NTP resync
     (this thread can't do that itself — see fetch_loop()) so drift
     since the last scheduled sync doesn't show up in the reading.
+    Pressing A (a single press, not held — see
+    _check_mode_toggle_button()) flips between REST and websocket
+    prices, showing the new mode's name once as feedback.
 
     Each ticker's render is wrapped in a try/except: an uncaught
     exception on this thread doesn't print a visible traceback the way
@@ -150,10 +227,13 @@ def fetch_loop():
     """Runs on the main core: keeps `quotes` fresh, resyncs the clock
     over NTP (both on its own schedule and on demand, whenever the
     display thread flags clock_sync_requested — see _render_ticker()),
-    and polls the ticker-editing web server — all three stay on this
-    thread since it's the one that already safely owns the network
-    stack."""
-    global tickers, clock_sync_requested
+    manages the live_quotes websocket connection (applying a pending
+    live_toggle_requested from Button A, then reconciling it against
+    the current quote_mode + market_open every iteration, since either
+    can change between refresh_quotes() calls), and polls the
+    ticker-editing web server — all four stay on this thread since it's
+    the one that already safely owns the network stack."""
+    global tickers, clock_sync_requested, live_toggle_requested, server
     server = web.start_server()
 
     # Sync first: refresh_quotes() (below) now checks market.plausibly_open(),
@@ -181,7 +261,35 @@ def fetch_loop():
             clock.sync()
             clock_sync_requested = False
             last_clock_sync = time.ticks_ms()
-        tickers = web.poll(server, tickers)
+
+        if live_toggle_requested:
+            quote_mode.save(not quote_mode.load())
+            live_toggle_requested = False
+
+        # Reconciled every iteration (not just on refresh_quotes()'s own
+        # longer timer) so both a market-open/closed transition and a
+        # quote_mode change (web UI or Button A) take effect within
+        # about a second, not up to QUOTE_REFRESH_INTERVAL later.
+        # connect()/disconnect() are both cheap no-ops when already in
+        # the state they're asking for. Closing immediately on leaving
+        # live mode (rather than leaving it connected until the next
+        # market check) is what lets a second PicoTicker on the same
+        # Finnhub key switch to live mode right away, instead of
+        # waiting for this one's connection to go stale.
+        live_mode = quote_mode.load() and market_open
+        if live_mode:
+            live_quotes.connect(tickers, poll_web=_service_web)
+            live_quotes.poll(tickers, quotes, poll_web=_service_web)
+        else:
+            live_quotes.disconnect()
+
+        # sync_tickers() is a no-op while disconnected, so this doesn't
+        # need its own live_mode check — same reasoning as _service_web()
+        # calling it unconditionally above.
+        new_tickers = web.poll(server, tickers)
+        if new_tickers != tickers:
+            live_quotes.sync_tickers(new_tickers, poll_web=_service_web)
+        tickers = new_tickers
         time.sleep(1)
 
 
