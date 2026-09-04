@@ -435,6 +435,8 @@ quote_mode.py       — persisted REST-vs-live toggle, edited from the web
 clock.py            — NTP time sync and HH:MM formatting
 market.py           — local-clock gate for the Finnhub market-status check
 dst.py              — persisted DST toggle state, edited from the web UI
+dim_level.py        — persisted closed-market dim percentage, edited
+                       from the web UI
 config.example.py   — copy to config.py and fill in your own secrets
 tickers.json        — the live, editable ticker list (created automatically
                        on first boot; not in this repo, lives on the device)
@@ -443,6 +445,8 @@ dst.json            — the two DST toggle states (same as above — created
 quote_mode.json     — the REST-vs-live setting (created the first time
                        you save one from the web UI or press Button A;
                        not in this repo, lives on the device)
+dim_level.json      — the closed-market dim percentage (same as above —
+                       created automatically, not in this repo)
 media/demo.mp4      — short demo video, linked at the top of this README
 ```
 

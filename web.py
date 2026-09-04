@@ -8,6 +8,7 @@ import socket
 import time
 
 import config
+import dim_level
 import dst
 import quote_mode
 from stocks import symbol_exists
@@ -57,6 +58,14 @@ competes for that connection, so it's the safer choice if you're
 running more than one device.</p>
 <form method="POST" action="/quote-mode">
 <p><label><input type="checkbox" name="live" {live_checked}> Use live websocket prices</label></p>
+<p><button type="submit">Save</button></p>
+</form>
+<hr>
+<h2>Closed-market dimming</h2>
+<p>Brightness tickers are shown at while the market's closed, as a
+percentage of full brightness.</p>
+<form method="POST" action="/dim-level">
+<p><label>Dim level: <input type="number" name="percent" min="0" max="100" value="{dim_percent}"> %</label></p>
 <p><button type="submit">Save</button></p>
 </form>
 <script>
@@ -189,6 +198,7 @@ def _render_page(tickers, error):
         local_dst_checked="checked" if state["local"] else "",
         market_dst_checked="checked" if state["market"] else "",
         live_checked="checked" if quote_mode.load() else "",
+        dim_percent=dim_level.load(),
         max_tickers=MAX_TICKERS,
     ).encode()
 
@@ -267,6 +277,14 @@ def poll(server_socket, tickers):
         elif method == "POST" and path == "/quote-mode":
             fields = _parse_form(body)
             quote_mode.save("live" in fields)
+            conn.send(b"HTTP/1.1 303 See Other\r\nLocation: /\r\n\r\n")
+        elif method == "POST" and path == "/dim-level":
+            fields = _parse_form(body)
+            try:
+                percent = int(fields.get("percent", ""))
+            except ValueError:
+                percent = dim_level.load()
+            dim_level.save(percent)
             conn.send(b"HTTP/1.1 303 See Other\r\nLocation: /\r\n\r\n")
         else:
             conn.send(b"HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n\r\n" + _render_page(tickers, ""))

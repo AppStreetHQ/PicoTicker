@@ -1,6 +1,7 @@
 config.py
 tickers.json
 dst.json
+dim_level.json
 __pycache__/
 *.pyc
 .DS_Store

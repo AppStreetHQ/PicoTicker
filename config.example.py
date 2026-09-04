@@ -89,3 +89,11 @@ MARKET_WINDOW_REFRESH_INTERVAL = 120
 # EDT, use the "US market is in DST" toggle on the web UI rather than
 # editing this — see TIMEZONE_OFFSET_HOURS above for why.
 MARKET_TIMEZONE_OFFSET_HOURS = -5
+
+# Brightness tickers are shown at while the market's closed, as a
+# percentage of full brightness (0-100). This is only the *initial*
+# value for a device that's never had it touched — the web UI's
+# "Closed-market dimming" section flips a persisted override
+# (dim_level.json) that takes precedence over this from then on, same
+# as TICKERS/USE_LIVE_QUOTES above.
+CLOSED_DIM_PERCENT = 30

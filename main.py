@@ -4,6 +4,7 @@ import _thread
 
 import clock
 import config
+import dim_level
 import live_quotes
 import market
 import quote_mode
@@ -17,7 +18,6 @@ display = Display()
 UP_COLOR = (0, 200, 60)
 DOWN_COLOR = (220, 30, 30)
 NEUTRAL_COLOR = (200, 200, 200)
-CLOSED_DIM_FACTOR = 0.35
 SCROLL_SPEED = getattr(config, "SCROLL_SPEED", 0.14)
 CLOSED_QUOTE_REFRESH_INTERVAL = getattr(config, "CLOSED_QUOTE_REFRESH_INTERVAL", 300)
 MARKET_WINDOW_REFRESH_INTERVAL = getattr(config, "MARKET_WINDOW_REFRESH_INTERVAL", 120)
@@ -38,7 +38,8 @@ server = None  # set once in fetch_loop(); module-level so _service_web() can re
 
 
 def dim(color):
-    return tuple(int(c * CLOSED_DIM_FACTOR) for c in color)
+    factor = dim_level.load() / 100
+    return tuple(int(c * factor) for c in color)
 
 
 def all_fetches_failed():
