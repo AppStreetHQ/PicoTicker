@@ -43,10 +43,10 @@ button:disabled {{ opacity: 0.5; cursor: not-allowed; }}
 <p>MicroPython has no timezone database, so these need flipping by
 hand when your region's clocks change — no redeploy needed, just
 toggle and save.</p>
-<form method="POST" action="/dst">
-<p><label><input type="checkbox" name="local_dst" {local_dst_checked}> Local time is in DST (e.g. UK BST)</label></p>
-<p><label><input type="checkbox" name="market_dst" {market_dst_checked}> US market is in DST (EDT)</label></p>
-<p><button type="submit">Save</button></p>
+<form method="POST" action="/dst" id="dstForm">
+<p><label><input type="checkbox" name="local_dst" id="localDst" {local_dst_checked}> Local time is in DST (e.g. UK BST)</label></p>
+<p><label><input type="checkbox" name="market_dst" id="marketDst" {market_dst_checked}> US market is in DST (EDT)</label></p>
+<p><button type="submit" id="dstSave" disabled>Save</button></p>
 </form>
 <hr>
 <h2>Price source</h2>
@@ -56,17 +56,17 @@ if more than one PicoTicker shares your key, only one should use the
 websocket at a time. REST fetches on a timer instead and never
 competes for that connection, so it's the safer choice if you're
 running more than one device.</p>
-<form method="POST" action="/quote-mode">
-<p><label><input type="checkbox" name="live" {live_checked}> Use live websocket prices</label></p>
-<p><button type="submit">Save</button></p>
+<form method="POST" action="/quote-mode" id="quoteModeForm">
+<p><label><input type="checkbox" name="live" id="liveMode" {live_checked}> Use live websocket prices</label></p>
+<p><button type="submit" id="quoteModeSave" disabled>Save</button></p>
 </form>
 <hr>
 <h2>Closed-market dimming</h2>
 <p>Brightness tickers are shown at while the market's closed, as a
 percentage of full brightness.</p>
-<form method="POST" action="/dim-level">
-<p><label>Dim level: <input type="number" name="percent" min="0" max="100" value="{dim_percent}"> %</label></p>
-<p><button type="submit">Save</button></p>
+<form method="POST" action="/dim-level" id="dimForm">
+<p><label>Dim level: <input type="number" name="percent" id="dimPercent" min="0" max="100" value="{dim_percent}"> %</label></p>
+<p><button type="submit" id="dimSave" disabled>Save</button></p>
 </form>
 <script>
 var form = document.getElementById("tickerForm");
@@ -108,6 +108,38 @@ textarea.addEventListener("input", function () {{
     hint.textContent = changed ? error : "";
     button.disabled = !changed || error !== "";
 }});
+
+// Simple forms (no server-side validation, just enable Save once a
+// field actually differs from what the page loaded with).
+function trackForm(formId, buttonId, fieldIds) {{
+    var form = document.getElementById(formId);
+    var saveButton = document.getElementById(buttonId);
+    var fields = fieldIds.map(function (id) {{ return document.getElementById(id); }});
+    var initialValues = fields.map(function (el) {{
+        return el.type === "checkbox" ? el.checked : el.value;
+    }});
+
+    function checkChanged() {{
+        var changed = fields.some(function (el, i) {{
+            var value = el.type === "checkbox" ? el.checked : el.value;
+            return value !== initialValues[i];
+        }});
+        saveButton.disabled = !changed;
+    }}
+
+    fields.forEach(function (el) {{
+        el.addEventListener("input", checkChanged);
+        el.addEventListener("change", checkChanged);
+    }});
+    form.addEventListener("submit", function () {{
+        saveButton.disabled = true;
+        saveButton.textContent = "Saving...";
+    }});
+}}
+
+trackForm("dstForm", "dstSave", ["localDst", "marketDst"]);
+trackForm("quoteModeForm", "quoteModeSave", ["liveMode"]);
+trackForm("dimForm", "dimSave", ["dimPercent"]);
 </script>
 </body>
 </html>"""
