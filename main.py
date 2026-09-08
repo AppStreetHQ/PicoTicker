@@ -1,6 +1,7 @@
 import time
 
 import _thread
+import machine
 
 import clock
 import config
@@ -23,6 +24,51 @@ CLOSED_QUOTE_REFRESH_INTERVAL = getattr(config, "CLOSED_QUOTE_REFRESH_INTERVAL",
 MARKET_WINDOW_REFRESH_INTERVAL = getattr(config, "MARKET_WINDOW_REFRESH_INTERVAL", 120)
 FETCH_THROTTLE_SECONDS = getattr(config, "FETCH_THROTTLE_SECONDS", 0.5)
 CLOCK_RESYNC_INTERVAL = getattr(config, "CLOCK_RESYNC_INTERVAL", 3600)
+
+# Hardware watchdog: a last-resort net under everything else here,
+# including bugs not yet known about. If fetch_loop() ever genuinely
+# hangs (a REST call blocking forever with no timeout of its own, a
+# WiFi driver lockup, ...) rather than raising — which none of the
+# try/except handling elsewhere in this file can do anything about,
+# since nothing is raised to catch — this fires and hard-resets the
+# whole chip once _feed_watchdog() stops being called for too long.
+# 8000ms is close to the RP2040/2350's hardware ceiling (~8388ms;
+# machine.WDT has no software-extendable timeout on this port), so
+# _feed_watchdog() has to be reachable often — see its call sites for
+# why each one is safe.
+#
+# Deliberately NOT armed here at module load: the very first WiFi
+# connection can legitimately take much longer than 8s on a cold boot
+# (see Known limitations in the README — occasionally the WiFi chip
+# needs more real elapsed time than boot.py alone gives it), and that
+# whole boot sequence runs before fetch_loop()'s main loop even starts.
+# _arm_watchdog() only runs once that sequence has already completed,
+# so the watchdog protects steady-state operation — where the bug it
+# was added for (websocket prices silently freezing) actually
+# happens — without any risk of mistaking a slow-but-normal cold boot
+# for a hang and boot-looping forever.
+WATCHDOG_TIMEOUT_MS = 8000
+_watchdog = None
+
+
+def _feed_watchdog():
+    if _watchdog is not None:
+        _watchdog.feed()
+
+
+def _arm_watchdog():
+    global _watchdog
+    if _watchdog is None:
+        _watchdog = machine.WDT(timeout=WATCHDOG_TIMEOUT_MS)
+
+
+if machine.reset_cause() == machine.WDT_RESET:
+    # Visible, on-device confirmation that the watchdog above actually
+    # fired and recovered — otherwise this kind of automatic recovery
+    # is invisible unless someone happens to be watching the serial
+    # console at the exact moment it happens.
+    print("recovered from a watchdog reset")
+    display.scroll_text("RECOVERED", NEUTRAL_COLOR, speed=SCROLL_SPEED)
 
 # The mutable, live ticker list — seeded once from config.TICKERS on
 # first boot, then persisted to tickers.json and editable via the web
@@ -71,6 +117,7 @@ def _service_web(seconds):
             # whether live mode happens to be active right now.
             live_quotes.sync_tickers(new_tickers)
             tickers = new_tickers
+        _feed_watchdog()
         time.sleep_ms(50)
 
 
@@ -94,7 +141,7 @@ def refresh_quotes():
     this is the only source of truth, exactly as before live prices
     existed."""
     global market_open, need_quotes
-    wifi.ensure_connected()
+    wifi.ensure_connected(feed=_feed_watchdog)
 
     if market.plausibly_open():
         # Only ask Finnhub during a window where the market could
@@ -232,7 +279,8 @@ def fetch_loop():
     live_toggle_requested from Button A, then reconciling it against
     the current quote_mode + market_open every iteration, since either
     can change between refresh_quotes() calls), and polls the
-    ticker-editing web server — all four stay on this thread since it's
+    ticker-editing web server, and feeds the hardware watchdog (see
+    _feed_watchdog() above) — all five stay on this thread since it's
     the one that already safely owns the network stack."""
     global tickers, clock_sync_requested, live_toggle_requested, server
     server = web.start_server()
@@ -248,6 +296,7 @@ def fetch_loop():
         refresh_quotes()
     except Exception as exc:
         print("fetch_loop error (startup)", exc)
+    _arm_watchdog()
     last_refresh = time.ticks_ms()
     last_clock_sync = time.ticks_ms()
 
@@ -313,6 +362,7 @@ def fetch_loop():
             # never-let-one-failure-take-down-everything philosophy the
             # rest of this project already follows (see README).
             print("fetch_loop error", exc)
+        _feed_watchdog()
         time.sleep(1)
 
 

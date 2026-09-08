@@ -37,6 +37,13 @@ QUOTE_REFRESH_INTERVAL = 60
 # persistent outage doesn't retry every second.
 STREAM_RECONNECT_BACKOFF_SECONDS = 15
 
+# Seconds of total silence on the trades websocket (no trades, and no
+# ping — see finnhub_ws.py, which sends its own every 30s) before it's
+# treated as dead and reconnected. A TCP connection can die with no
+# error at all (a NAT timeout, an ISP-level drop with no RST/FIN), so
+# this is what actually catches that — nothing raises on its own.
+STALE_CONNECTION_SECONDS = 90
+
 # Seconds to wait between each ticker's fetch within a single refresh
 # cycle. Without this, fetching a long TICKERS list fires every request
 # back-to-back with no gap, which risks tripping Finnhub's Cloudflare-

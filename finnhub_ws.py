@@ -19,16 +19,29 @@ the real device before relying on them here:
     normal POSIX non-blocking recv: it returns whatever's already
     decrypted (up to n bytes, possibly fewer), or None if nothing is
     ready yet. That's what the steady-state poll() loop relies on.
+
+A TCP connection can also die silently — a NAT timeout or an ISP-level
+drop with no RST, no FIN, nothing — leaving read() forever returning
+None as if the connection were merely quiet rather than actually dead.
+Neither the OS nor Finnhub's server is guaranteed to ever tell us this
+happened, so poll() tracks last_activity_ms (updated on any bytes at
+all, not just decoded messages) and sends its own periodic ping rather
+than only relying on Finnhub's — the caller (live_quotes.py) compares
+that timestamp against a staleness threshold and forces a reconnect if
+it's been quiet for too long, since a `read()` that only ever returns
+None can't be distinguished from a live connection on its own.
 """
 
 import binascii
 import os
 import socket
 import ssl
+import time
 
 HOST = "ws.finnhub.io"
 PORT = 443
 CONNECT_TIMEOUT_SECONDS = 15
+PING_INTERVAL_SECONDS = 30
 
 
 class WebSocket:
@@ -37,6 +50,8 @@ class WebSocket:
         self._raw = None
         self._sock = None
         self._buf = b""
+        self._last_ping_ms = None
+        self.last_activity_ms = None
 
     def connect(self):
         addr = socket.getaddrinfo(HOST, PORT)[0][-1]
@@ -47,6 +62,9 @@ class WebSocket:
         self._handshake()
         self._raw.settimeout(0)  # non-blocking from here — see module docstring
         self._buf = b""
+        now = time.ticks_ms()
+        self.last_activity_ms = now
+        self._last_ping_ms = now
 
     def _handshake(self):
         key = binascii.b2a_base64(os.urandom(16)).strip().decode()
@@ -109,7 +127,10 @@ class WebSocket:
         frames are answered with a pong and never appear in the result;
         an empty list means nothing new, or nothing complete yet).
         Raises OSError if the connection has actually dropped, for the
-        caller to reconnect."""
+        caller to reconnect. Also sends a ping of our own roughly every
+        PING_INTERVAL_SECONDS — see module docstring for why relying
+        purely on Finnhub's own traffic (trades, or its own pings) isn't
+        enough to tell a merely-quiet connection from a dead one."""
         while True:
             chunk = self._sock.read(1024)
             if chunk is None:
@@ -117,6 +138,7 @@ class WebSocket:
             if chunk == b"":
                 raise OSError("websocket connection closed by peer")
             self._buf += chunk
+            self.last_activity_ms = time.ticks_ms()
 
         messages = []
         while True:
@@ -130,6 +152,12 @@ class WebSocket:
                 raise OSError("websocket closed by server")
             elif opcode == 0x1:  # text
                 messages.append(payload.decode())
+
+        now = time.ticks_ms()
+        if time.ticks_diff(now, self._last_ping_ms) >= PING_INTERVAL_SECONDS * 1000:
+            self._send_frame(0x9, b"")
+            self._last_ping_ms = now
+
         return messages
 
     def _pop_frame(self):

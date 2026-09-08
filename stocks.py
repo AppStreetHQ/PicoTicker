@@ -6,12 +6,23 @@ QUOTE_URL = "https://finnhub.io/api/v1/quote"
 MARKET_STATUS_URL = "https://finnhub.io/api/v1/stock/market-status"
 SEARCH_URL = "https://finnhub.io/api/v1/search"
 
+# Confirmed against the real device: urequests.get()'s timeout kwarg is
+# genuinely enforced at the socket level here (a request to a
+# deliberately black-holed address failed at exactly the requested
+# timeout, not indefinitely). Without it, a TCP connection that stalls
+# mid-request rather than erroring — the same silent-failure class as
+# finnhub_ws.py's stale-websocket problem, just on the REST side —
+# blocks forever with nothing to raise for the try/except below to
+# catch, wedging fetch_loop() with no diagnostic. Finnhub's own
+# latency is normally well under a second, so this is generous.
+REQUEST_TIMEOUT_SECONDS = 5
+
 
 def _fetch_quote_json(symbol):
     url = "{}?symbol={}&token={}".format(QUOTE_URL, symbol, config.FINNHUB_API_KEY)
     response = None
     try:
-        response = urequests.get(url)
+        response = urequests.get(url, timeout=REQUEST_TIMEOUT_SECONDS)
         return response.json()
     finally:
         if response is not None:
@@ -52,7 +63,7 @@ def fetch_market_open():
     url = "{}?exchange=US&token={}".format(MARKET_STATUS_URL, config.FINNHUB_API_KEY)
     response = None
     try:
-        response = urequests.get(url)
+        response = urequests.get(url, timeout=REQUEST_TIMEOUT_SECONDS)
         data = response.json()
         return bool(data.get("isOpen"))
     except Exception as exc:
@@ -71,7 +82,7 @@ def symbol_exists(symbol):
     url = "{}?q={}&token={}".format(SEARCH_URL, symbol, config.FINNHUB_API_KEY)
     response = None
     try:
-        response = urequests.get(url)
+        response = urequests.get(url, timeout=REQUEST_TIMEOUT_SECONDS)
         data = response.json()
         for result in data.get("result", []):
             if result.get("symbol") == symbol:

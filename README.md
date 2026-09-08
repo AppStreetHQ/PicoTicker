@@ -279,6 +279,18 @@ restarting it), it reconnects automatically after
 `STREAM_RECONNECT_BACKOFF_SECONDS` (default 15) rather than hammering
 retries.
 
+A TCP connection can also die with no error at all — a NAT timeout or
+an ISP-level drop with no RST or FIN, leaving `read()` forever
+returning "nothing new" as if the connection were merely quiet rather
+than actually dead. In practice this showed up as prices freezing for
+several minutes with no exception anywhere, needing a manual reset —
+so `finnhub_ws.py` sends its own keepalive ping roughly every 30
+seconds and tracks when anything (a trade, a ping, Finnhub's own
+pings) was last actually received; `live_quotes.py` compares that
+against `STALE_CONNECTION_SECONDS` (default 90) and forces a
+reconnect once it's been quiet for too long, rather than waiting for
+an error that might never come.
+
 ### Choosing REST or live prices
 
 Finnhub only allows **one open websocket connection per API key** — so
@@ -381,6 +393,60 @@ colours long after the close, say, since nothing's updating
 mid-subscribe are real risks over hours of runtime, not just
 hypothetical, so both loops log and move on to the next iteration
 instead of letting one failure take the whole thread down with it.
+
+### REST call timeouts
+
+`urequests.get()` calls in `stocks.py` didn't set a timeout, so a TCP
+connection that stalls mid-request rather than erroring outright — the
+same silent-failure class as the websocket staleness problem above,
+just on the REST side — would block forever with nothing to raise for
+the surrounding `try`/`except` to catch. In practice this looked like
+`fetch_loop()` wedged with no diagnostic: prices frozen, the web server
+unresponsive (same thread), yet Button A's toggle still visibly
+"working" (the display thread sets its flag and shows the banner
+regardless of whether the other thread is actually free to act on it).
+Confirmed directly against this firmware that `urequests.get()`'s
+`timeout` kwarg is genuinely enforced at the socket level, not silently
+ignored (a request to a deliberately unreachable address failed at
+exactly the requested timeout rather than hanging) — so every REST call
+now passes `timeout=REQUEST_TIMEOUT_SECONDS` (5s, generous next to
+Finnhub's normal well-under-a-second latency), turning an indefinite
+hang into a caught, already-handled exception.
+
+### The hardware watchdog
+
+The `try`/`except` guards above only help when something actually
+*raises* — REST calls now do, reliably, per the previous section. Some
+failures still might not — a WiFi driver lockup, or some other blocking
+call this project doesn't yet know needs a timeout —
+and no amount of exception handling catches a thread that's just stuck,
+not erroring. For that, `main.py` arms the RP2040/2350's hardware
+watchdog (`machine.WDT`, `WATCHDOG_TIMEOUT_MS` = 8000, close to this
+chip's ~8388ms hardware ceiling) and feeds it from every point in
+`fetch_loop()` that's reached at least that often — once per main loop
+iteration, inside `_service_web()`'s inner polling loop (so a slow
+multi-ticker REST burst doesn't starve it), and throughout
+`wifi.ensure_connected()`'s own retry wait (which can legitimately run
+for up to `attempts * wait_per_attempt` seconds — 50s by default — far
+longer than the watchdog's ceiling on its own). If feeding ever stops
+for `WATCHDOG_TIMEOUT_MS`, the whole chip hard-resets automatically,
+which is a real, physical safety net against classes of failure that
+can't be predicted or individually guarded against in advance.
+
+It's deliberately *not* armed until `_arm_watchdog()` runs, right after
+the initial boot-time WiFi connection + first quote fetch — not at
+module load. The very first WiFi connection can legitimately take much
+longer than 8 seconds on a cold boot (see
+[Known limitations](#known-limitations) below), and that whole sequence
+runs before `fetch_loop()`'s main loop, and its per-iteration feeding,
+ever starts. Arming any earlier would risk mistaking a slow-but-normal
+cold boot for a hang and boot-looping forever — arming it only once
+steady-state operation begins protects exactly where the bug it exists
+for actually happens, without that risk. On the
+next boot, `machine.reset_cause() == machine.WDT_RESET` is checked
+and, if true, the display scrolls `RECOVERED` once — otherwise this
+kind of automatic recovery would be invisible unless someone happened
+to be watching the serial console at the exact moment it fired.
 
 ### The pixel font
 

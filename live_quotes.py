@@ -24,6 +24,7 @@ from stocks import fetch_prev_close
 
 FETCH_THROTTLE_SECONDS = getattr(config, "FETCH_THROTTLE_SECONDS", 0.5)
 RECONNECT_BACKOFF_SECONDS = getattr(config, "STREAM_RECONNECT_BACKOFF_SECONDS", 15)
+STALE_CONNECTION_SECONDS = getattr(config, "STALE_CONNECTION_SECONDS", 90)
 
 _socket = None
 _subscribed = set()
@@ -127,7 +128,19 @@ def poll(tickers, quotes, poll_web=None):
     so reconnecting after one re-seeds every ticker via REST, same as a
     fresh connect — without poll_web that would block the web server
     for the whole reseed, not just the original connect that already
-    handles it."""
+    handles it.
+
+    Separately from all that, a TCP connection can die with no error at
+    all — no OSError, read() just quietly returns None forever (a NAT
+    timeout or an ISP-level drop, say). That's indistinguishable from a
+    connection that's merely quiet, which is exactly what happened in
+    practice: prices froze for several minutes with nothing wrong
+    according to any exception, needing a manual reset to clear. So
+    after a successful poll, this also checks how long it's actually
+    been since anything (a trade, or finnhub_ws.py's own periodic ping)
+    was last received — past STALE_CONNECTION_SECONDS, it's forced
+    through the same disconnect-and-backoff path as a real error,
+    rather than waiting for one that may never come."""
     global _socket, _next_reconnect_attempt
     if _socket is None:
         now = time.ticks_ms()
@@ -141,6 +154,9 @@ def poll(tickers, quotes, poll_web=None):
         messages = _socket.poll()
         for message in messages:
             _handle_message(message, quotes)
+        stale_ms = time.ticks_diff(time.ticks_ms(), _socket.last_activity_ms)
+        if stale_ms > STALE_CONNECTION_SECONDS * 1000:
+            raise OSError("no activity for {}s, treating connection as dead".format(stale_ms // 1000))
     except Exception as exc:
         print("live_quotes stream dropped", exc)
         disconnect()
