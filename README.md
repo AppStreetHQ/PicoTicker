@@ -181,7 +181,23 @@ Y also queues up a fresh sync rather than trusting whatever the last
 scheduled one left behind. The very first press after a fresh boot
 still just shows whatever the clock currently has (possibly all-zero
 or wrong, before the first sync completes); subsequent presses while
-still held pick up the newly-synced time. There's no timezone
+still held pick up the newly-synced time.
+
+A fresh WiFi association right at boot is a real, observed failure
+window for that very first NTP attempt — confirmed against the real
+device that a boot-time sync failed repeatedly while a manual retry
+moments later, network fully settled, succeeded first try (DNS/routing
+isn't always immediately ready). `clock.sync()` retries a couple of
+times a few seconds apart on its own; if it's *still* unsynced after
+that, `fetch_loop()`'s main loop keeps retrying every
+`CLOCK_RETRY_INTERVAL` (30s by default) rather than waiting the full
+hour. Either way, `market_open` won't trust
+`market.plausibly_open()`'s weekday/time-of-day judgement at all until
+a sync has actually succeeded once (staying at its safe "assume open"
+default instead) — otherwise the display could dim for up to an hour
+off a clock that's silently still sitting at MicroPython's un-synced
+default epoch, not the real date, which is exactly what happened
+before this was fixed. There's no timezone
 database on MicroPython, so `TIMEZONE_OFFSET_HOURS` in `config.py` is
 a fixed *standard-time* offset from UTC — see
 [Daylight saving](#daylight-saving) below for how the actual +1 hour

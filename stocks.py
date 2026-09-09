@@ -59,13 +59,25 @@ def fetch_prev_close(symbol):
 
 
 def fetch_market_open():
-    """Return True/False for whether the US market is open, or None on failure."""
+    """Return True/False for whether the US market is open, or None on
+    failure — including a response that came back with no "isOpen"
+    field at all (a malformed/truncated/unexpected body, e.g. from a
+    network hiccup — Finnhub sits behind Cloudflare). That's genuinely
+    ambiguous, not "definitely closed": bool(data.get("isOpen")) would
+    silently treat a missing field the same as an explicit False,
+    which could dim the display while the market's actually open with
+    nothing in the logs to explain why. A real "closed" answer from
+    Finnhub is always an explicit boolean, never a missing key."""
     url = "{}?exchange=US&token={}".format(MARKET_STATUS_URL, config.FINNHUB_API_KEY)
     response = None
     try:
         response = urequests.get(url, timeout=REQUEST_TIMEOUT_SECONDS)
         data = response.json()
-        return bool(data.get("isOpen"))
+        is_open = data.get("isOpen")
+        if is_open is None:
+            print("fetch_market_open: no isOpen field in response:", data)
+            return None
+        return bool(is_open)
     except Exception as exc:
         print("fetch_market_open failed", exc)
         return None

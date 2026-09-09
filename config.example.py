@@ -71,6 +71,14 @@ TIMEZONE_OFFSET_HOURS = 0
 # battery-backed RTC, so this is how it knows the time at all).
 CLOCK_RESYNC_INTERVAL = 3600
 
+# Seconds between resync attempts while the clock has never yet
+# synced successfully (e.g. a transient NTP hiccup right at boot,
+# just as WiFi comes up) — much shorter than CLOCK_RESYNC_INTERVAL so
+# that failure doesn't leave the clock (and therefore market_open,
+# which won't trust an unsynced clock's day/time-of-day judgement)
+# wrong for up to an hour.
+CLOCK_RETRY_INTERVAL = 30
+
 # US market ("Eastern Time") trading-hours window, in Eastern local
 # time. Used to skip the Finnhub market-status check entirely outside
 # plausible market hours (nights, weekends) rather than polling it

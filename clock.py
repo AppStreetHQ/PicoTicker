@@ -15,15 +15,28 @@ import dst
 TIMEZONE_OFFSET_HOURS = getattr(config, "TIMEZONE_OFFSET_HOURS", 0)
 
 
-def sync():
+def sync(attempts=3, wait_seconds=2, feed=None):
     """Sync the device's clock to NTP (UTC). Safe to call repeatedly;
-    on failure this just leaves whatever time was previously set."""
-    try:
-        ntptime.settime()
-        return True
-    except Exception as exc:
-        print("clock sync failed", exc)
-        return False
+    on failure this just leaves whatever time was previously set.
+
+    Retries a few times with a short gap: confirmed against the real
+    device that the very first attempt right after a fresh WiFi
+    association can fail repeatedly (DNS/routing not immediately
+    ready) while a manual retry moments later, network fully settled,
+    succeeds on the first try. feed, if given, is called between
+    attempts — main.py passes its own watchdog-feed function here,
+    since the retry sleeps would otherwise risk starving it."""
+    for attempt in range(attempts):
+        try:
+            ntptime.settime()
+            return True
+        except Exception as exc:
+            print("clock sync attempt", attempt + 1, "failed:", exc)
+            if attempt + 1 < attempts:
+                if feed is not None:
+                    feed()
+                time.sleep(wait_seconds)
+    return False
 
 
 def now_string():

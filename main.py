@@ -24,6 +24,7 @@ CLOSED_QUOTE_REFRESH_INTERVAL = getattr(config, "CLOSED_QUOTE_REFRESH_INTERVAL",
 MARKET_WINDOW_REFRESH_INTERVAL = getattr(config, "MARKET_WINDOW_REFRESH_INTERVAL", 120)
 FETCH_THROTTLE_SECONDS = getattr(config, "FETCH_THROTTLE_SECONDS", 0.5)
 CLOCK_RESYNC_INTERVAL = getattr(config, "CLOCK_RESYNC_INTERVAL", 3600)
+CLOCK_RETRY_INTERVAL = getattr(config, "CLOCK_RETRY_INTERVAL", 30)
 
 # Hardware watchdog: a last-resort net under everything else here,
 # including bugs not yet known about. If fetch_loop() ever genuinely
@@ -81,6 +82,7 @@ need_quotes = True  # startup: no data at all yet
 clock_sync_requested = False  # set by the display thread, consumed by fetch_loop
 live_toggle_requested = False  # set by the display thread (Button A), consumed by fetch_loop
 server = None  # set once in fetch_loop(); module-level so _service_web() can reach it too
+clock_synced = False  # True once clock.sync() has ever actually succeeded — see refresh_quotes()
 
 
 def dim(color):
@@ -143,7 +145,21 @@ def refresh_quotes():
     global market_open, need_quotes
     wifi.ensure_connected(feed=_feed_watchdog)
 
-    if market.plausibly_open():
+    was_open = market_open
+    if not clock_synced:
+        # market.plausibly_open() reads the clock, which — until the
+        # first successful clock.sync() — sits at MicroPython's
+        # un-synced default epoch (2021-01-01), not the real date/time.
+        # A weekday/time-of-day check against that is meaningless, and
+        # trusting its "closed" verdict would incorrectly dim the
+        # display for as long as the clock stays unsynced (up to an
+        # hour, before this bug fix — see fetch_loop()'s faster retry
+        # while unsynced). Safer to just keep the existing market_open
+        # value (True at boot) until there's an actual clock to judge
+        # by, matching this project's error-handling philosophy of
+        # never claiming more than is actually known.
+        pass
+    elif market.plausibly_open():
         # Only ask Finnhub during a window where the market could
         # actually be open — no point polling at 2am or on a Sunday.
         status = fetch_market_open()
@@ -151,6 +167,13 @@ def refresh_quotes():
             market_open = status  # else keep the last known state
     else:
         market_open = False
+    if market_open != was_open:
+        # A transition here should be rare and always explicable (the
+        # open/close bell, or a genuine holiday) — logging it is what
+        # would have caught a bad fetch_market_open() reading dimming
+        # the display while the market was actually open, instead of
+        # it just silently happening with nothing to point at.
+        print("market_open changed:", was_open, "->", market_open)
 
     if need_quotes:
         # First run ever — seed every ticker via REST so the display has
@@ -282,7 +305,7 @@ def fetch_loop():
     ticker-editing web server, and feeds the hardware watchdog (see
     _feed_watchdog() above) — all five stay on this thread since it's
     the one that already safely owns the network stack."""
-    global tickers, clock_sync_requested, live_toggle_requested, server
+    global tickers, clock_sync_requested, live_toggle_requested, server, clock_synced
     server = web.start_server()
 
     # Sync first: refresh_quotes() (below) now checks market.plausibly_open(),
@@ -290,9 +313,15 @@ def fetch_loop():
     # un-synced default until this runs. Wrapped the same as the main
     # loop below and for the same reason: a boot-time WiFi hiccup here
     # must not be able to kill this thread before the loop (and its own
-    # retry-on-the-next-interval healing) ever gets a chance to run.
+    # retry-on-the-next-interval healing) ever gets a chance to run. If
+    # this first attempt itself fails (a transient NTP hiccup right as
+    # WiFi just came up is a real, observed failure mode — see
+    # clock_synced's uses below), refresh_quotes() already knows not to
+    # trust market.plausibly_open() until clock_synced actually flips
+    # True, and the main loop below retries much sooner than
+    # CLOCK_RESYNC_INTERVAL while it hasn't yet.
     try:
-        clock.sync()
+        clock_synced = clock.sync(feed=_feed_watchdog)
         refresh_quotes()
     except Exception as exc:
         print("fetch_loop error (startup)", exc)
@@ -314,8 +343,16 @@ def fetch_loop():
             if time.ticks_diff(time.ticks_ms(), last_refresh) >= interval * 1000:
                 refresh_quotes()
                 last_refresh = time.ticks_ms()
-            if clock_sync_requested or time.ticks_diff(time.ticks_ms(), last_clock_sync) >= CLOCK_RESYNC_INTERVAL * 1000:
-                clock.sync()
+            # While never-yet-synced, retry every CLOCK_RETRY_INTERVAL
+            # (30s) rather than waiting the full CLOCK_RESYNC_INTERVAL
+            # (1hr) — a failed sync used to reset that hour-long timer
+            # regardless, so one transient NTP hiccup right at boot
+            # could leave the clock (and therefore market_open, via
+            # refresh_quotes()) wrong for up to an hour.
+            resync_interval = CLOCK_RESYNC_INTERVAL if clock_synced else CLOCK_RETRY_INTERVAL
+            if clock_sync_requested or time.ticks_diff(time.ticks_ms(), last_clock_sync) >= resync_interval * 1000:
+                if clock.sync(feed=_feed_watchdog):
+                    clock_synced = True
                 clock_sync_requested = False
                 last_clock_sync = time.ticks_ms()
 
