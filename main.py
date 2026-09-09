@@ -25,6 +25,7 @@ MARKET_WINDOW_REFRESH_INTERVAL = getattr(config, "MARKET_WINDOW_REFRESH_INTERVAL
 FETCH_THROTTLE_SECONDS = getattr(config, "FETCH_THROTTLE_SECONDS", 0.5)
 CLOCK_RESYNC_INTERVAL = getattr(config, "CLOCK_RESYNC_INTERVAL", 3600)
 CLOCK_RETRY_INTERVAL = getattr(config, "CLOCK_RETRY_INTERVAL", 30)
+MARKET_STATUS_RETRY_INTERVAL = getattr(config, "MARKET_STATUS_RETRY_INTERVAL", 15)
 
 # Hardware watchdog: a last-resort net under everything else here,
 # including bugs not yet known about. If fetch_loop() ever genuinely
@@ -83,6 +84,7 @@ clock_sync_requested = False  # set by the display thread, consumed by fetch_loo
 live_toggle_requested = False  # set by the display thread (Button A), consumed by fetch_loop
 server = None  # set once in fetch_loop(); module-level so _service_web() can reach it too
 clock_synced = False  # True once clock.sync() has ever actually succeeded — see refresh_quotes()
+market_open_confirmed = False  # True once market_open has ever been a real answer, not just the boot default — see refresh_quotes()
 
 
 def dim(color):
@@ -142,7 +144,7 @@ def refresh_quotes():
     closed (no trades for the websocket to report, live mode or not),
     this is the only source of truth, exactly as before live prices
     existed."""
-    global market_open, need_quotes
+    global market_open, need_quotes, market_open_confirmed
     wifi.ensure_connected(feed=_feed_watchdog)
 
     was_open = market_open
@@ -164,9 +166,22 @@ def refresh_quotes():
         # actually be open — no point polling at 2am or on a Sunday.
         status = fetch_market_open()
         if status is not None:
-            market_open = status  # else keep the last known state
+            market_open = status
+            market_open_confirmed = True
+        # else: keep the last known state — but if this is the very
+        # first attempt (a transient network hiccup right after a
+        # fresh boot/reset is real, not hypothetical — the same class
+        # that caused clock.sync() to need retrying), that "last known
+        # state" is just the uninformed boot default (True), displayed
+        # confidently as if it meant something. market_open_confirmed
+        # staying False is what makes fetch_loop() retry this much
+        # sooner than the normal interval instead of leaving a possibly
+        # wrong guess on screen for up to a minute.
     else:
+        # Outside the padded window is itself a confirmed answer —
+        # doesn't need Finnhub to know that.
         market_open = False
+        market_open_confirmed = True
     if market_open != was_open:
         # A transition here should be rare and always explicable (the
         # open/close bell, or a genuine holiday) — logging it is what
@@ -331,7 +346,14 @@ def fetch_loop():
 
     while True:
         try:
-            if market_open:
+            if not market_open_confirmed:
+                # market_open is still just an unconfirmed guess (the
+                # boot default, or the last known state after a failed
+                # first attempt) — retry much sooner than any of the
+                # normal cadences below so a wrong guess doesn't sit on
+                # screen for up to a minute.
+                interval = MARKET_STATUS_RETRY_INTERVAL
+            elif market_open:
                 interval = config.QUOTE_REFRESH_INTERVAL
             elif market.plausibly_open():
                 # Closed, but within the window where it could open any

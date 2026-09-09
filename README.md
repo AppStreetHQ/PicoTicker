@@ -372,6 +372,19 @@ websocket) no matter how long your ticker list gets:
   Time's *standard* (EST) offset from UTC, separate from your own
   `TIMEZONE_OFFSET_HOURS` since they're rarely the same place; see
   [Daylight saving](#daylight-saving) for the EDT half of the year.
+- None of those cadences apply until `market_open` has actually been
+  confirmed at least once by a real answer (a successful Finnhub
+  response, or a definitive "outside the trading window" from the
+  clock alone) — while unconfirmed, it retries every
+  `MARKET_STATUS_RETRY_INTERVAL` (15s by default) instead. Observed
+  directly: the very first status check right after a boot/reset can
+  fail (the same class of transient network hiccup that can also
+  affect the first clock sync — see [Checking the time](#checking-the-time)),
+  and "keep the last known state" on that first-ever attempt just
+  means the uninformed boot default (`True`, assume open) — confidently
+  displayed bright, with the correction not landing for up to a full
+  `QUOTE_REFRESH_INTERVAL` if left on that cadence, which is exactly
+  what happened before this was fixed.
 - Within a single batch of REST calls (the initial seed at boot, a
   closed-market retry, or seeding previous-close baselines), each
   ticker's request is spaced out by `FETCH_THROTTLE_SECONDS` rather

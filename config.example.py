@@ -79,6 +79,14 @@ CLOCK_RESYNC_INTERVAL = 3600
 # wrong for up to an hour.
 CLOCK_RETRY_INTERVAL = 30
 
+# Seconds between market-status retries while it's never yet gotten a
+# real, confirmed answer (only the boot default, or the last known
+# state after a failed first attempt right after boot/reset — the same
+# class of transient network hiccup CLOCK_RETRY_INTERVAL exists for).
+# Much shorter than QUOTE_REFRESH_INTERVAL so a wrong guess doesn't sit
+# on screen for up to a minute.
+MARKET_STATUS_RETRY_INTERVAL = 15
+
 # US market ("Eastern Time") trading-hours window, in Eastern local
 # time. Used to skip the Finnhub market-status check entirely outside
 # plausible market hours (nights, weekends) rather than polling it
