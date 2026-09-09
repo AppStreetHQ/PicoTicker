@@ -87,6 +87,14 @@ CLOCK_RETRY_INTERVAL = 30
 # on screen for up to a minute.
 MARKET_STATUS_RETRY_INTERVAL = 15
 
+# Seconds to keep the live websocket connected after the market closes
+# before disconnecting and doing the one-off authoritative REST
+# refresh. A closing-auction print can take a few seconds to be
+# reported after the bell — cutting the live feed (the best-quality
+# source available) the instant Finnhub reports "closed" risks missing
+# it, showing a slightly-stale price as if it were the actual close.
+CLOSE_GRACE_SECONDS = 30
+
 # US market ("Eastern Time") trading-hours window, in Eastern local
 # time. Used to skip the Finnhub market-status check entirely outside
 # plausible market hours (nights, weekends) rather than polling it

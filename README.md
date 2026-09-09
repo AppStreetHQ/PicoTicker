@@ -307,6 +307,34 @@ against `STALE_CONNECTION_SECONDS` (default 90) and forces a
 reconnect once it's been quiet for too long, rather than waiting for
 an error that might never come.
 
+Reconnecting resumes the stream going forward, but it can't backfill
+whatever trades happened while the connection was actually down — so
+if that gap happened to span the market's close, `quotes` would be
+left holding whatever was last captured live, which might be from
+well before the real closing prices. Observed directly: prices came
+back stale after a live gap, correctly dimmed, but wrong, needing a
+manual reset to force a fresh fetch.
+
+Two things fix this together. First, the websocket isn't disconnected
+the instant the market closes: `market_closed_since` starts a
+`CLOSE_GRACE_SECONDS` (30s) window — see `_still_in_close_grace_period()`
+— during which the connection stays open, since a closing-auction
+print can take a few seconds to be reported after the bell, and the
+live feed is the best-quality source available for it. Cutting it the
+moment Finnhub reports "closed" risks missing that final print
+entirely. Second, once the grace period elapses, `refresh_quotes()`
+does one authoritative REST refresh of every ticker, straight from
+Finnhub's own (by then more likely settled) data — a cheap backstop
+(one REST call per ticker, not recurring) for a closing auction that
+took longer than the grace window, or any other staleness from earlier
+in the day. The display itself dims immediately on detecting the
+close, regardless of the grace period — only the live connection and
+the REST catch-up are delayed, not the visual "closed" indication.
+Switching to REST mode explicitly (the web UI or Button A) still
+disconnects immediately, unaffected by the grace period — that's what
+lets a second PicoTicker on the same Finnhub key take over the
+connection right away.
+
 ### Choosing REST or live prices
 
 Finnhub only allows **one open websocket connection per API key** — so

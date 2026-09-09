@@ -26,6 +26,7 @@ FETCH_THROTTLE_SECONDS = getattr(config, "FETCH_THROTTLE_SECONDS", 0.5)
 CLOCK_RESYNC_INTERVAL = getattr(config, "CLOCK_RESYNC_INTERVAL", 3600)
 CLOCK_RETRY_INTERVAL = getattr(config, "CLOCK_RETRY_INTERVAL", 30)
 MARKET_STATUS_RETRY_INTERVAL = getattr(config, "MARKET_STATUS_RETRY_INTERVAL", 15)
+CLOSE_GRACE_SECONDS = getattr(config, "CLOSE_GRACE_SECONDS", 30)
 
 # Hardware watchdog: a last-resort net under everything else here,
 # including bugs not yet known about. If fetch_loop() ever genuinely
@@ -85,6 +86,8 @@ live_toggle_requested = False  # set by the display thread (Button A), consumed 
 server = None  # set once in fetch_loop(); module-level so _service_web() can reach it too
 clock_synced = False  # True once clock.sync() has ever actually succeeded — see refresh_quotes()
 market_open_confirmed = False  # True once market_open has ever been a real answer, not just the boot default — see refresh_quotes()
+market_closed_since = None  # ticks_ms() of the most recent open->closed transition, or None while open — see _still_in_close_grace_period()
+close_refresh_done = True  # False from the moment the market closes until the post-grace REST refresh has run once for that close
 
 
 def dim(color):
@@ -97,6 +100,22 @@ def all_fetches_failed():
     them came back empty — a sign the API itself is down, not just one
     bad symbol (or startup still in progress with some tickers pending)."""
     return len(quotes) == len(tickers) and all(v is None for v in quotes.values())
+
+
+def _still_in_close_grace_period():
+    """True for CLOSE_GRACE_SECONDS after the market's most recently
+    detected close. During this window the websocket is kept connected
+    a little longer rather than disconnecting the instant Finnhub
+    reports "closed" — a closing-auction print can take a few seconds
+    to be reported after the bell, and the live feed is the most
+    authoritative source available for it. Also delays the one-off
+    post-close REST refresh (see refresh_quotes()) until after this
+    window, so that refresh reflects Finnhub's own settled data rather
+    than whatever it happened to have the instant the market closed."""
+    return (
+        market_closed_since is not None
+        and time.ticks_diff(time.ticks_ms(), market_closed_since) < CLOSE_GRACE_SECONDS * 1000
+    )
 
 
 def _service_web(seconds):
@@ -144,10 +163,11 @@ def refresh_quotes():
     closed (no trades for the websocket to report, live mode or not),
     this is the only source of truth, exactly as before live prices
     existed."""
-    global market_open, need_quotes, market_open_confirmed
+    global market_open, need_quotes, market_open_confirmed, market_closed_since, close_refresh_done
     wifi.ensure_connected(feed=_feed_watchdog)
 
     was_open = market_open
+    is_first_call = need_quotes  # captured before the need_quotes block below can clear it
     if not clock_synced:
         # market.plausibly_open() reads the clock, which — until the
         # first successful clock.sync() — sits at MicroPython's
@@ -189,24 +209,69 @@ def refresh_quotes():
         # the display while the market was actually open, instead of
         # it just silently happening with nothing to point at.
         print("market_open changed:", was_open, "->", market_open)
+        if market_open or is_first_call:
+            # Either reopened, or this is a cold boot discovering an
+            # already-closed market rather than a transition observed
+            # in real time (was_open's module default of True just met
+            # the real, closed answer for the first time) — the
+            # unconditional full fetch below (need_quotes) already
+            # gets fresh REST data regardless of market state, so
+            # there's nothing to catch up on and no reason to hold the
+            # websocket open waiting for closing-auction trades that
+            # aren't newly happening.
+            market_closed_since = None
+            close_refresh_done = True
+        else:
+            # A genuine, just-observed close. Starts the
+            # CLOSE_GRACE_SECONDS window — see
+            # _still_in_close_grace_period() — rather than disconnecting
+            # the websocket and doing the post-close REST refresh
+            # immediately: a closing-auction print can take a few
+            # seconds to be reported after the bell, and cutting the
+            # live feed (or asking Finnhub for a REST quote) right at
+            # the instant it reports "closed" risks missing it.
+            market_closed_since = time.ticks_ms()
+            close_refresh_done = False
 
     if need_quotes:
         # First run ever — seed every ticker via REST so the display has
-        # something to show immediately, regardless of open/closed.
+        # something to show immediately, regardless of open/closed. An
+        # `elif` from here down: was_open's module default (True) would
+        # otherwise look like a same-call "just closed" transition too
+        # on a cold boot into an already-closed market, fetching every
+        # ticker twice in one call.
         for symbol in tickers:
             fetch_and_store(symbol)
         need_quotes = False
-
-    if market_open:
+    elif market_open:
         if not quote_mode.load():
             # REST mode — nothing else refreshes prices while open.
             for symbol in tickers:
                 fetch_and_store(symbol)
+    elif _still_in_close_grace_period():
+        # Just closed, or recently closed — hold off on the
+        # authoritative REST refresh a little longer (see
+        # _still_in_close_grace_period()) and keep relying on the
+        # still-connected (per fetch_loop()) live feed for now, in
+        # case trailing settlement trades are still arriving through
+        # it — the best-quality source available for them.
+        pass
+    elif not close_refresh_done:
+        # Grace period has just elapsed — do the one-off authoritative
+        # REST refresh now. Even if the live feed already caught the
+        # real closing prints during the grace window, this is a cheap
+        # backstop (one REST call per ticker, not recurring) against a
+        # closing auction that took longer than the grace period to
+        # settle, or any other staleness that crept in earlier in the
+        # day for unrelated reasons.
+        for symbol in tickers:
+            fetch_and_store(symbol)
+        close_refresh_done = True
     else:
-        # Closed, and we already have a baseline — don't re-fetch tickers
-        # that already succeeded, but do retry ones that failed, so a
-        # transient blip self-heals instead of showing "ERROR" until the
-        # market reopens.
+        # Already closed, refreshed, and settled — don't re-fetch
+        # tickers that already succeeded, but do retry ones that
+        # failed, so a transient blip self-heals instead of showing
+        # "ERROR" until the market reopens.
         for symbol in tickers:
             if quotes.get(symbol) is None:
                 fetch_and_store(symbol)
@@ -387,13 +452,16 @@ def fetch_loop():
             # and a quote_mode change (web UI or Button A) take effect
             # within about a second, not up to QUOTE_REFRESH_INTERVAL
             # later. connect()/disconnect() are both cheap no-ops when
-            # already in the state they're asking for. Closing
-            # immediately on leaving live mode (rather than leaving it
-            # connected until the next market check) is what lets a
-            # second PicoTicker on the same Finnhub key switch to live
-            # mode right away, instead of waiting for this one's
-            # connection to go stale.
-            live_mode = quote_mode.load() and market_open
+            # already in the state they're asking for. An explicit
+            # switch to REST mode (quote_mode.load() False) still
+            # disconnects immediately — that's what lets a second
+            # PicoTicker on the same Finnhub key take over the
+            # connection right away — but the market closing on its own
+            # doesn't: _still_in_close_grace_period() keeps this one
+            # connected a little longer first, in case trailing
+            # closing-auction trades are still arriving (see
+            # refresh_quotes()).
+            live_mode = quote_mode.load() and (market_open or _still_in_close_grace_period())
             if live_mode:
                 live_quotes.connect(tickers, poll_web=_service_web)
                 live_quotes.poll(tickers, quotes, poll_web=_service_web)
