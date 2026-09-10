@@ -3,8 +3,10 @@ import time
 import _thread
 import machine
 
+import boot_diagnostics
 import clock
 import config
+import diagnostics_log
 import dim_level
 import live_quotes
 import market
@@ -65,11 +67,21 @@ def _arm_watchdog():
         _watchdog = machine.WDT(timeout=WATCHDOG_TIMEOUT_MS)
 
 
-if machine.reset_cause() == machine.WDT_RESET:
-    # Visible, on-device confirmation that the watchdog above actually
-    # fired and recovered — otherwise this kind of automatic recovery
-    # is invisible unless someone happens to be watching the serial
-    # console at the exact moment it happens.
+# Only the immediate, on-screen feedback happens this early — logging
+# the boot cause (below) is deliberately deferred until after the
+# boot-time clock.sync() attempt in fetch_loop(), since time.time()
+# here still sits at MicroPython's un-synced default epoch
+# (2021-01-01): logging it now would permanently bake a nonsensical
+# "49889h ago" into this entry once the clock does sync (confirmed
+# directly against this device — exactly the failure this project has
+# already had to fix for market_open, applying here too).
+_watchdog_recovery = machine.reset_cause() == machine.WDT_RESET
+if _watchdog_recovery:
+    # The RECOVERED scroll is easy to miss on a moving ticker and, once
+    # missed, gone for good — logging the boot cause (once it has a
+    # trustworthy timestamp) is what makes a board-level recovery
+    # checkable on the web UI after the fact, the same as a
+    # websocket-level drop (see live_quotes.disconnect()).
     print("recovered from a watchdog reset")
     display.scroll_text("RECOVERED", NEUTRAL_COLOR, speed=SCROLL_SPEED)
 
@@ -208,6 +220,7 @@ def refresh_quotes():
         # the display while the market was actually open, instead of
         # it just silently happening with nothing to point at.
         print("market_open changed:", was_open, "->", market_open)
+        diagnostics_log.log("market_open changed: {} -> {}".format(was_open, market_open))
         if market_open or is_first_call:
             # Either reopened, or this is a cold boot discovering an
             # already-closed market rather than a transition observed
@@ -404,6 +417,12 @@ def fetch_loop():
         refresh_quotes()
     except Exception as exc:
         print("fetch_loop error (startup)", exc)
+    # Deferred from the reset_cause check above so this entry gets a
+    # trustworthy timestamp — see _watchdog_recovery's definition.
+    if _watchdog_recovery:
+        diagnostics_log.log("boot: recovered from a watchdog reset")
+    else:
+        diagnostics_log.log("boot: normal (reset_cause={})".format(machine.reset_cause()))
     _arm_watchdog()
     last_refresh = time.ticks_ms()
     last_clock_sync = time.ticks_ms()

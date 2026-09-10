@@ -7,7 +7,9 @@ import json
 import socket
 import time
 
+import boot_diagnostics
 import config
+import diagnostics_log
 import dim_level
 import dst
 import live_quotes
@@ -62,9 +64,9 @@ running more than one device.</p>
 <p><button type="submit" id="quoteModeSave" disabled>Save</button></p>
 </form>
 <hr>
-<h2>Live connection diagnostics</h2>
-<p>{connection_status}</p>
-<p>{connection_drop}</p>
+<h2>Diagnostics</h2>
+<p>{connection_status}, up {uptime}.</p>
+{event_log}
 <hr>
 <h2>Closed-market dimming</h2>
 <p>Brightness tickers are shown at while the market's closed, as a
@@ -243,36 +245,49 @@ def _format_duration(seconds):
     return "{}h {}m".format(hours, minutes % 60)
 
 
-def _connection_diagnostics_text():
-    """A couple of human-readable lines summarising live_quotes'
-    connection history — otherwise the only way to see why the stream
-    last dropped (a Finnhub-initiated close with a reason, a stale
-    connection, a WiFi blip, ...) is to be watching the serial console
-    at the exact moment it happens."""
-    diag = live_quotes.diagnostics()
-    status = "Connected." if diag["connected"] else "Not currently connected."
-    if diag["reason"] is None:
-        drop = "No drops recorded since boot."
-    else:
-        drop = "Last drop {} ago, after {} connected: {}".format(
-            _format_duration(diag["seconds_ago"]),
-            _format_duration(diag["connection_duration_seconds"]),
-            _html_escape(diag["reason"]),
-        )
-    return status, drop
+# Anything timestamped before this is clearly an artifact of an
+# unsynced clock (MicroPython's default epoch is 2021-01-01), not a
+# real event time — confirmed directly on this device that a log entry
+# written before the boot-time clock.sync() attempt bakes in exactly
+# that, permanently showing a nonsensical "49889h ago". Callers now
+# defer logging until after that attempt (see main.py), but this stays
+# as a cheap backstop against any future call site that doesn't.
+_MIN_PLAUSIBLE_TIMESTAMP = 1735689600  # 2025-01-01 UTC
+
+
+def _event_log_html():
+    """A recent-first bullet list of diagnostics_log's persisted event
+    history — boot causes, stream drops (a Finnhub-initiated close
+    with a reason, a stale connection, a WiFi blip, ...), and
+    market-status transitions. Persisted rather than kept purely in
+    memory, since the event worth diagnosing (a watchdog-triggered
+    reboot) is often the very thing that would wipe an in-memory log
+    clean at the moment it's most needed."""
+    entries = diagnostics_log.recent()
+    if not entries:
+        return "<p>No events logged yet.</p>"
+    now = time.time()
+    items = []
+    for entry in entries:
+        if entry["t"] < _MIN_PLAUSIBLE_TIMESTAMP:
+            when = "time unknown (logged before the clock had synced)"
+        else:
+            when = "{} ago".format(_format_duration(max(0, now - entry["t"])))
+        items.append("<li>{}: {}</li>".format(when, _html_escape(entry["msg"])))
+    return "<ul>" + "".join(items) + "</ul>"
 
 
 def _render_page(tickers, error):
     state = dst.load()
-    connection_status, connection_drop = _connection_diagnostics_text()
     return PAGE_TEMPLATE.format(
         tickers=", ".join(tickers),
         error=error,
         local_dst_checked="checked" if state["local"] else "",
         market_dst_checked="checked" if state["market"] else "",
         live_checked="checked" if quote_mode.load() else "",
-        connection_status=connection_status,
-        connection_drop=connection_drop,
+        connection_status="Live-connected" if live_quotes.connected() else "Not live-connected right now",
+        uptime=_format_duration(boot_diagnostics.uptime_seconds()),
+        event_log=_event_log_html(),
         dim_percent=dim_level.load(),
         max_tickers=MAX_TICKERS,
     ).encode()
