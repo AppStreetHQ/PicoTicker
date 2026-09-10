@@ -68,6 +68,43 @@ removeForm.addEventListener("submit", function () {{
     removeBtn.textContent = "Removing...";
 }});
 </script>
+<script>
+// Polls /quotes.json to keep the table's price/change cells current
+// without a full page reload — fast while streaming live off Finnhub's
+// websocket, or matching config.py's QUOTE_REFRESH_INTERVAL (how often
+// main.py actually re-fetches over REST) so REST mode never polls
+// faster than the data itself changes.
+var liveMode = {live_mode_js};
+var pollInterval = liveMode ? 2000 : 60000;
+
+function paintQuote(ticker, quote) {{
+    var priceCell = document.getElementById("price-" + ticker);
+    var changeCell = document.getElementById("change-" + ticker);
+    if (!priceCell || !changeCell) {{ return; }}  // removed from another tab since page load
+    if (!quote) {{
+        priceCell.textContent = "...";
+        changeCell.textContent = "...";
+        changeCell.style.color = "#666";
+        return;
+    }}
+    var price = quote[0], changePercent = quote[1];
+    var sign = changePercent >= 0 ? "+" : "";
+    priceCell.textContent = "$" + price.toFixed(2);
+    changeCell.textContent = sign + changePercent.toFixed(2) + "%";
+    changeCell.style.color = changePercent > 0 ? "#0a0" : changePercent < 0 ? "#c00" : "#666";
+}}
+
+function pollQuotes() {{
+    fetch("/quotes.json?t=" + Date.now())
+        .then(function (r) {{ return r.json(); }})
+        .then(function (data) {{
+            for (var ticker in data) {{ paintQuote(ticker, data[ticker]); }}
+        }})
+        .catch(function () {{}});  // a dropped request just waits for the next tick
+}}
+
+setInterval(pollQuotes, pollInterval);
+</script>
 
 {add_section}
 <hr>
@@ -293,12 +330,25 @@ def _render_ticker_rows(tickers, quotes):
         price, change, color = _format_quote_cells(t, quotes)
         rows.append(
             '<tr><td><input type="checkbox" name="remove" value="{t}"></td>'
-            "<td>{t}</td><td>{price}</td>"
-            '<td style="color:{color}">{change}</td></tr>'.format(
+            "<td>{t}</td>"
+            '<td id="price-{t}">{price}</td>'
+            '<td id="change-{t}" style="color:{color}">{change}</td></tr>'.format(
                 t=t, price=price, change=change, color=color
             )
         )
     return "".join(rows)
+
+
+def _quotes_json(tickers, quotes):
+    """[price, change_percent] per ticker for the page's polling script
+    (see /quotes.json below) — a list rather than _format_quote_cells()'s
+    pre-formatted strings, so the client can recolor/format live without
+    a round-trip, and null for a ticker with nothing fetched yet."""
+    data = {}
+    for t in tickers:
+        quote = quotes.get(t)
+        data[t] = None if quote is None else [quote[0], quote[1]]
+    return json.dumps(data).encode()
 
 
 # Anything timestamped before this is clearly an artifact of an
@@ -340,13 +390,15 @@ def _render_page(tickers, quotes, remove_error="", add_error="", new_ticker_valu
         add_section = ADD_FORM_TEMPLATE.format(add_error=add_error, new_ticker_value=new_ticker_value)
 
     state = dst.load()
+    live_mode = quote_mode.load()
     return PAGE_TEMPLATE.format(
         rows=_render_ticker_rows(tickers, quotes),
         remove_error=remove_error,
         add_section=add_section,
+        live_mode_js="true" if live_mode else "false",
         local_dst_checked="checked" if state["local"] else "",
         market_dst_checked="checked" if state["market"] else "",
-        live_checked="checked" if quote_mode.load() else "",
+        live_checked="checked" if live_mode else "",
         connection_status="Live-connected" if live_quotes.connected() else "Not live-connected right now",
         uptime=_format_duration(boot_diagnostics.uptime_seconds()),
         event_log=_event_log_html(),
@@ -412,6 +464,7 @@ def poll(server_socket, tickers, quotes=None):
         header, _, body = request.partition("\r\n\r\n")
         request_line = header.split("\r\n", 1)[0]
         method, path, _ = request_line.split(" ", 2)
+        path = path.split("?", 1)[0]  # strip the polling script's cache-busting ?t=... param
 
         if method == "POST" and path == "/tickers/remove":
             to_remove = set(_parse_multi(body, "remove"))
@@ -454,6 +507,8 @@ def poll(server_socket, tickers, quotes=None):
                 percent = dim_level.load()
             dim_level.save(percent)
             conn.send(b"HTTP/1.1 303 See Other\r\nLocation: /\r\n\r\n")
+        elif method == "GET" and path == "/quotes.json":
+            conn.send(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n" + _quotes_json(tickers, quotes))
         else:
             conn.send(b"HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n\r\n" + _render_page(tickers, quotes))
     except Exception as exc:

@@ -218,7 +218,9 @@ gets applied without a redeploy.
 The web page shows a **Watchlist** table of your current symbols, each
 with its live price and change (green/red), a checkbox, and a "Remove
 selected" button — and below that, an **Add a stock** box for adding
-one symbol at a time:
+one symbol at a time. Prices refresh in place (no reload needed) every
+2 seconds while on live websocket prices, or every 60 seconds — the
+same cadence `main.py` itself re-fetches at — on REST:
 
 - **Remove selected** is disabled until at least one row is checked,
   and blocked from removing every ticker — the watchlist can't go
