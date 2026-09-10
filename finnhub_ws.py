@@ -149,7 +149,21 @@ class WebSocket:
             if opcode == 0x9:  # ping
                 self._send_frame(0xA, payload)  # pong
             elif opcode == 0x8:  # close
-                raise OSError("websocket closed by server")
+                # RFC 6455: an optional 2-byte big-endian status code
+                # followed by a UTF-8 reason string — this is exactly
+                # the diagnostic that would say *why* the server closed
+                # it (a connection-duration limit, a policy reason,
+                # ...) rather than us just guessing, so it's worth
+                # surfacing rather than discarding.
+                code = None
+                reason = ""
+                if len(payload) >= 2:
+                    code = int.from_bytes(payload[0:2], "big")
+                    try:
+                        reason = payload[2:].decode()
+                    except Exception:
+                        reason = repr(payload[2:])
+                raise OSError("websocket closed by server: code={} reason={!r}".format(code, reason))
             elif opcode == 0x1:  # text
                 messages.append(payload.decode())
 

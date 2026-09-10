@@ -30,6 +30,14 @@ _socket = None
 _subscribed = set()
 _prev_close = {}
 _next_reconnect_attempt = 0
+_connected_at = None  # ticks_ms() the current connection was established, or None
+
+# Diagnostics for the web UI (see diagnostics() below) — otherwise the
+# only way to see why the stream last dropped is to be watching the
+# serial console at the exact moment it happens.
+last_disconnect_reason = None
+last_disconnect_at_ms = None
+last_connection_duration_ms = None
 
 
 def _seed_prev_close(symbols, poll_web=None):
@@ -53,7 +61,7 @@ def _seed_prev_close(symbols, poll_web=None):
 def connect(tickers, poll_web=None):
     """Open the stream and subscribe to every current ticker. Safe to
     call when already connected — does nothing."""
-    global _socket, _subscribed
+    global _socket, _subscribed, _connected_at
     if _socket is not None:
         return
     _seed_prev_close(tickers, poll_web)
@@ -64,24 +72,38 @@ def connect(tickers, poll_web=None):
             sock.subscribe(symbol)
         _socket = sock
         _subscribed = set(tickers)
+        _connected_at = time.ticks_ms()
     except Exception as exc:
         print("live_quotes connect failed", exc)
         _socket = None
 
 
-def disconnect():
+def disconnect(reason=None):
     """Closes the stream and drops the cached previous-close baselines —
     tomorrow's reconnect must re-fetch those via REST rather than keep
     comparing against today's now-stale close. Cheap to call when
     already disconnected (main.py's fetch_loop does, every iteration
-    it's not in live mode) — does nothing beyond the initial check."""
-    global _socket, _subscribed
+    it's not in live mode) — does nothing beyond the initial check.
+
+    reason, if given, records this as a *diagnosed* disconnect (see
+    diagnostics() below) rather than a routine one — main.py's routine
+    calls (switching to REST mode, or the market simply closing) don't
+    pass one, so they don't overwrite whatever the last real failure
+    was with "no reason"."""
+    global _socket, _subscribed, _connected_at
+    global last_disconnect_reason, last_disconnect_at_ms, last_connection_duration_ms
     if _socket is None:
         return
+    if reason is not None:
+        last_disconnect_reason = reason
+        last_disconnect_at_ms = time.ticks_ms()
+        if _connected_at is not None:
+            last_connection_duration_ms = time.ticks_diff(last_disconnect_at_ms, _connected_at)
     _socket.close()
     _socket = None
     _subscribed = set()
     _prev_close.clear()
+    _connected_at = None
 
 
 def sync_tickers(tickers, poll_web=None):
@@ -106,7 +128,7 @@ def sync_tickers(tickers, poll_web=None):
         _subscribed = wanted
     except Exception as exc:
         print("live_quotes sync_tickers failed", exc)
-        disconnect()
+        disconnect(reason="sync_tickers: {}".format(exc))
 
 
 def poll(tickers, quotes, poll_web=None):
@@ -159,8 +181,24 @@ def poll(tickers, quotes, poll_web=None):
             raise OSError("no activity for {}s, treating connection as dead".format(stale_ms // 1000))
     except Exception as exc:
         print("live_quotes stream dropped", exc)
-        disconnect()
+        disconnect(reason=str(exc))
         _next_reconnect_attempt = time.ticks_add(time.ticks_ms(), RECONNECT_BACKOFF_SECONDS * 1000)
+
+
+def diagnostics():
+    """The most recent stream disconnect, for display on the web UI —
+    otherwise the only way to see why the connection dropped is to be
+    watching the serial console at the exact moment it happens."""
+    seconds_ago = None
+    if last_disconnect_at_ms is not None:
+        seconds_ago = time.ticks_diff(time.ticks_ms(), last_disconnect_at_ms) // 1000
+    duration_seconds = None if last_connection_duration_ms is None else last_connection_duration_ms // 1000
+    return {
+        "connected": _socket is not None,
+        "reason": last_disconnect_reason,
+        "seconds_ago": seconds_ago,
+        "connection_duration_seconds": duration_seconds,
+    }
 
 
 def _handle_message(message, quotes):

@@ -10,6 +10,7 @@ import time
 import config
 import dim_level
 import dst
+import live_quotes
 import quote_mode
 from stocks import symbol_exists
 
@@ -60,6 +61,10 @@ running more than one device.</p>
 <p><label><input type="checkbox" name="live" id="liveMode" {live_checked}> Use live websocket prices</label></p>
 <p><button type="submit" id="quoteModeSave" disabled>Save</button></p>
 </form>
+<hr>
+<h2>Live connection diagnostics</h2>
+<p>{connection_status}</p>
+<p>{connection_drop}</p>
 <hr>
 <h2>Closed-market dimming</h2>
 <p>Brightness tickers are shown at while the market's closed, as a
@@ -222,14 +227,52 @@ def _validation_error(new_tickers, current_tickers):
     return ""
 
 
+def _html_escape(text):
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _format_duration(seconds):
+    if seconds is None:
+        return "?"
+    if seconds < 60:
+        return "{}s".format(seconds)
+    minutes = seconds // 60
+    if minutes < 60:
+        return "{}m {}s".format(minutes, seconds % 60)
+    hours = minutes // 60
+    return "{}h {}m".format(hours, minutes % 60)
+
+
+def _connection_diagnostics_text():
+    """A couple of human-readable lines summarising live_quotes'
+    connection history — otherwise the only way to see why the stream
+    last dropped (a Finnhub-initiated close with a reason, a stale
+    connection, a WiFi blip, ...) is to be watching the serial console
+    at the exact moment it happens."""
+    diag = live_quotes.diagnostics()
+    status = "Connected." if diag["connected"] else "Not currently connected."
+    if diag["reason"] is None:
+        drop = "No drops recorded since boot."
+    else:
+        drop = "Last drop {} ago, after {} connected: {}".format(
+            _format_duration(diag["seconds_ago"]),
+            _format_duration(diag["connection_duration_seconds"]),
+            _html_escape(diag["reason"]),
+        )
+    return status, drop
+
+
 def _render_page(tickers, error):
     state = dst.load()
+    connection_status, connection_drop = _connection_diagnostics_text()
     return PAGE_TEMPLATE.format(
         tickers=", ".join(tickers),
         error=error,
         local_dst_checked="checked" if state["local"] else "",
         market_dst_checked="checked" if state["market"] else "",
         live_checked="checked" if quote_mode.load() else "",
+        connection_status=connection_status,
+        connection_drop=connection_drop,
         dim_percent=dim_level.load(),
         max_tickers=MAX_TICKERS,
     ).encode()
