@@ -215,17 +215,21 @@ gets applied without a redeploy.
 
 ### Editing your ticker list
 
-The web page shows a text box with your current symbols, comma- or
-newline-separated. Edit it and hit **Save**:
+The web page shows a **Watchlist** table of your current symbols, each
+with its live price and change (green/red), a checkbox, and a "Remove
+selected" button — and below that, an **Add a stock** box for adding
+one symbol at a time:
 
-- The button stays disabled until you've actually changed something
-  and every symbol looks like a plausible ticker (1–6 letters/dots).
-- Any symbol that's genuinely new gets checked against Finnhub's own
-  symbol lookup before saving — if it doesn't recognise `XYZABC` as a
-  real ticker, it'll tell you and won't save the change. This check can
-  take a few seconds per new symbol (it's a live API call), so don't
-  worry if "Saving..." sits there for a moment when adding several at
-  once.
+- **Remove selected** is disabled until at least one row is checked,
+  and blocked from removing every ticker — the watchlist can't go
+  empty.
+- **Add a stock**'s button stays disabled until what you've typed looks
+  like a plausible ticker (1–6 letters/dots). On submit, the symbol
+  gets checked against Finnhub's own symbol lookup before saving — if
+  it doesn't recognise `XYZABC` as a real ticker, it'll tell you and
+  won't add it. This check is a live API call, so don't worry if
+  "Adding..." sits there for a moment. Hidden once you're at the
+  50-symbol cap.
 - Symbols are always shown and stored in alphabetical order.
 - Capped at 50 symbols — the limit on Finnhub's free-tier websocket
   feed (see [Choosing REST or live prices](#choosing-rest-or-live-prices)),

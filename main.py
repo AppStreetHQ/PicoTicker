@@ -145,7 +145,7 @@ def _service_web(seconds):
     global tickers
     deadline = time.ticks_add(time.ticks_ms(), int(seconds * 1000))
     while time.ticks_diff(deadline, time.ticks_ms()) > 0:
-        new_tickers = web.poll(server, tickers)
+        new_tickers = web.poll(server, tickers, quotes)
         if new_tickers != tickers:
             # sync_tickers() is a no-op while disconnected, so this is
             # safe to call unconditionally rather than needing to know
@@ -489,7 +489,7 @@ def fetch_loop():
             # sync_tickers() is a no-op while disconnected, so this
             # doesn't need its own live_mode check — same reasoning as
             # _service_web() calling it unconditionally above.
-            new_tickers = web.poll(server, tickers)
+            new_tickers = web.poll(server, tickers, quotes)
             if new_tickers != tickers:
                 live_quotes.sync_tickers(new_tickers, poll_web=_service_web)
             tickers = new_tickers
