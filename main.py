@@ -168,40 +168,39 @@ def refresh_quotes():
 
     was_open = market_open
     is_first_call = need_quotes  # captured before the need_quotes block below can clear it
-    if not clock_synced:
-        # market.plausibly_open() reads the clock, which — until the
-        # first successful clock.sync() — sits at MicroPython's
-        # un-synced default epoch (2021-01-01), not the real date/time.
-        # A weekday/time-of-day check against that is meaningless, and
-        # trusting its "closed" verdict would incorrectly dim the
-        # display for as long as the clock stays unsynced (up to an
-        # hour, before this bug fix — see fetch_loop()'s faster retry
-        # while unsynced). Safer to just keep the existing market_open
-        # value (True at boot) until there's an actual clock to judge
-        # by, matching this project's error-handling philosophy of
-        # never claiming more than is actually known.
-        pass
-    elif market.plausibly_open():
-        # Only ask Finnhub during a window where the market could
-        # actually be open — no point polling at 2am or on a Sunday.
+
+    # market.plausibly_open() is a pure local-clock optimization to
+    # skip asking Finnhub outside trading hours (no point polling at
+    # 2am or on a Sunday) — it needs a correctly-synced clock to be
+    # trustworthy at all. The REST call itself doesn't: confirmed
+    # directly against this device that fetch_market_open() can
+    # succeed even while clock.sync() is still failing (NTP/UDP and
+    # HTTPS/TLS are unrelated network operations — one failing says
+    # nothing about the other). So while unsynced, skip the
+    # optimization rather than skipping the check entirely: asking
+    # Finnhub directly gets a real, confirmed answer just as fast as
+    # the REST call itself succeeds, instead of needlessly waiting on
+    # an unrelated clock sync first.
+    if clock_synced and not market.plausibly_open():
+        # Outside the padded window is itself a confirmed answer, now
+        # that the clock's trustworthy enough to know that — doesn't
+        # need Finnhub to say so too.
+        market_open = False
+        market_open_confirmed = True
+    else:
         status = fetch_market_open()
         if status is not None:
             market_open = status
             market_open_confirmed = True
         # else: keep the last known state — but if this is the very
         # first attempt (a transient network hiccup right after a
-        # fresh boot/reset is real, not hypothetical — the same class
-        # that caused clock.sync() to need retrying), that "last known
-        # state" is just the uninformed boot default (True), displayed
-        # confidently as if it meant something. market_open_confirmed
-        # staying False is what makes fetch_loop() retry this much
-        # sooner than the normal interval instead of leaving a possibly
-        # wrong guess on screen for up to a minute.
-    else:
-        # Outside the padded window is itself a confirmed answer —
-        # doesn't need Finnhub to know that.
-        market_open = False
-        market_open_confirmed = True
+        # fresh boot/reset is real, not hypothetical), that "last
+        # known state" is just the uninformed boot default (True),
+        # displayed confidently as if it meant something.
+        # market_open_confirmed staying False is what makes
+        # fetch_loop() retry this much sooner than the normal interval
+        # instead of leaving a possibly wrong guess on screen for a
+        # while.
     if market_open != was_open:
         # A transition here should be rare and always explicable (the
         # open/close bell, or a genuine holiday) — logging it is what
@@ -388,18 +387,18 @@ def fetch_loop():
     global tickers, clock_sync_requested, live_toggle_requested, server, clock_synced
     server = web.start_server()
 
-    # Sync first: refresh_quotes() (below) now checks market.plausibly_open(),
-    # which reads the clock — on a cold boot that clock is still at its
-    # un-synced default until this runs. Wrapped the same as the main
-    # loop below and for the same reason: a boot-time WiFi hiccup here
-    # must not be able to kill this thread before the loop (and its own
-    # retry-on-the-next-interval healing) ever gets a chance to run. If
-    # this first attempt itself fails (a transient NTP hiccup right as
-    # WiFi just came up is a real, observed failure mode — see
-    # clock_synced's uses below), refresh_quotes() already knows not to
-    # trust market.plausibly_open() until clock_synced actually flips
-    # True, and the main loop below retries much sooner than
-    # CLOCK_RESYNC_INTERVAL while it hasn't yet.
+    # Sync first — needed for clock.now_string() (the Y button) and
+    # for picking a sensible refresh_quotes() polling cadence below,
+    # though refresh_quotes() itself no longer depends on it for
+    # market_open's correctness: NTP/UDP sync and the Finnhub REST
+    # calls are unrelated network operations, and asking Finnhub
+    # directly works fine even before the clock's synced (confirmed
+    # directly against this device). Wrapped the same as the main loop
+    # below and for the same reason: a boot-time WiFi hiccup here (a
+    # transient NTP failure right as WiFi comes up is a real, observed
+    # failure mode) must not be able to kill this thread before the
+    # loop — and its own faster retry while clock_synced is still
+    # False — ever gets a chance to run.
     try:
         clock_synced = clock.sync(feed=_feed_watchdog)
         refresh_quotes()

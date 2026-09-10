@@ -191,13 +191,23 @@ isn't always immediately ready). `clock.sync()` retries a couple of
 times a few seconds apart on its own; if it's *still* unsynced after
 that, `fetch_loop()`'s main loop keeps retrying every
 `CLOCK_RETRY_INTERVAL` (30s by default) rather than waiting the full
-hour. Either way, `market_open` won't trust
-`market.plausibly_open()`'s weekday/time-of-day judgement at all until
-a sync has actually succeeded once (staying at its safe "assume open"
-default instead) — otherwise the display could dim for up to an hour
-off a clock that's silently still sitting at MicroPython's un-synced
-default epoch, not the real date, which is exactly what happened
-before this was fixed. There's no timezone
+hour.
+
+Either way, `refresh_quotes()` doesn't let an unsynced clock delay
+knowing whether the market's actually open: `market.plausibly_open()`
+(the weekday/time-of-day check) is only trusted to *skip* asking
+Finnhub once the clock's confirmed good — while unsynced, it just
+always asks Finnhub directly instead of waiting. NTP (UDP) and the
+Finnhub REST calls (HTTPS) are unrelated network operations —
+confirmed directly on this device that `fetch_market_open()` can
+succeed even while `clock.sync()` is still failing — so there's no
+reason the correctness of one should wait on the other; only the "no
+point polling at 2am" *optimization* needs a trustworthy clock, not
+the underlying answer. Before this, `market_open` used to keep its
+"assume open" default (safe, but potentially wrong) until the clock
+synced — the display could stay bright for up to a minute after a
+reset with the market genuinely closed, if the network happened to
+need a few retries to settle. There's no timezone
 database on MicroPython, so `TIMEZONE_OFFSET_HOURS` in `config.py` is
 a fixed *standard-time* offset from UTC — see
 [Daylight saving](#daylight-saving) below for how the actual +1 hour
