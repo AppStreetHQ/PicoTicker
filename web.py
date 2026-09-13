@@ -26,13 +26,15 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
 <title>PicoTicker</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
-body {{ font-family: sans-serif; max-width: 480px; margin: 40px auto; padding: 0 16px; }}
+body {{ font-family: 'Courier New', Courier, monospace; max-width: 480px; margin: 40px auto; padding: 0 16px; }}
 table {{ width: 100%; border-collapse: collapse; margin: 8px 0; }}
-th, td {{ text-align: left; padding: 4px 6px; border-bottom: 1px solid #eee; }}
+th, td {{ text-align: left; padding: 4px 6px; border-bottom: 1px solid #eee; font-weight: bold; }}
 input[type=text] {{ font-size: 1rem; padding: 4px; }}
 button {{ font-size: 1rem; padding: 8px 16px; }}
 button:disabled {{ opacity: 0.5; cursor: not-allowed; }}
 .hint {{ color: #b00; min-height: 1.2em; font-size: 0.9rem; }}
+@keyframes flashRow {{ 0% {{ background-color: #ffe680; }} 100% {{ background-color: transparent; }} }}
+tr.flash {{ animation: flashRow 1.2s ease-out; }}
 </style>
 </head>
 <body>
@@ -89,9 +91,20 @@ function paintQuote(ticker, quote) {{
     }}
     var price = quote[0], changePercent = quote[1];
     var sign = changePercent >= 0 ? "+" : "";
-    priceCell.textContent = "$" + price.toFixed(2);
-    changeCell.textContent = sign + changePercent.toFixed(2) + "%";
+    var newPrice = "$" + price.toFixed(2);
+    var newChange = sign + changePercent.toFixed(2) + "%";
+    var changed = priceCell.textContent !== newPrice || changeCell.textContent !== newChange;
+    priceCell.textContent = newPrice;
+    changeCell.textContent = newChange;
     changeCell.style.color = changePercent > 0 ? "#0a0" : changePercent < 0 ? "#c00" : "#666";
+    if (changed) {{
+        // priceCell's direct parent is the <tr> - flash the whole row so
+        // an update is obvious at a glance, not just a quiet text change.
+        var row = priceCell.parentElement;
+        row.classList.remove("flash");
+        void row.offsetWidth; // force a reflow so the animation restarts if still mid-flash
+        row.classList.add("flash");
+    }}
 }}
 
 function pollQuotes() {{
