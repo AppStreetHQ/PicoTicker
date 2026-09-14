@@ -90,9 +90,9 @@ function paintQuote(ticker, quote) {{
         return;
     }}
     var price = quote[0], changePercent = quote[1];
-    var sign = changePercent >= 0 ? "+" : "";
+    var arrow = changePercent > 0 ? "▲ " : changePercent < 0 ? "▼ " : "";
     var newPrice = "$" + price.toFixed(2);
-    var newChange = sign + changePercent.toFixed(2) + "%";
+    var newChange = arrow + Math.abs(changePercent).toFixed(2) + "%";
     var changed = priceCell.textContent !== newPrice || changeCell.textContent !== newChange;
     priceCell.textContent = newPrice;
     changeCell.textContent = newChange;
@@ -330,9 +330,9 @@ def _format_quote_cells(ticker, quotes):
     if quote is None:
         return "...", "...", "#666"
     price, change_percent = quote
-    sign = "+" if change_percent >= 0 else ""
+    arrow = "▲ " if change_percent > 0 else "▼ " if change_percent < 0 else ""
     price_text = "${:.2f}".format(price)
-    change_text = "{}{:.2f}%".format(sign, change_percent)
+    change_text = "{}{:.2f}%".format(arrow, abs(change_percent))
     color = "#0a0" if change_percent > 0 else "#c00" if change_percent < 0 else "#666"
     return price_text, change_text, color
 
