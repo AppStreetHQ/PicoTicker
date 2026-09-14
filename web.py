@@ -29,6 +29,10 @@ PAGE_TEMPLATE = r"""<!DOCTYPE html>
 body {{ font-family: 'Courier New', Courier, monospace; max-width: 480px; margin: 40px auto; padding: 0 16px; }}
 table {{ width: 100%; border-collapse: collapse; margin: 8px 0; }}
 th, td {{ text-align: left; padding: 4px 6px; border-bottom: 1px solid #eee; font-weight: bold; }}
+th.sortable {{ cursor: pointer; user-select: none; }}
+th.sortable:hover {{ color: #06c; }}
+.sortArrow {{ display: inline-block; width: 1em; margin-left: 0.3em; color: #bbb; }}
+.sortArrow.active {{ color: #06c; }}
 input[type=text] {{ font-size: 1rem; padding: 4px; }}
 button {{ font-size: 1rem; padding: 8px 16px; }}
 button:disabled {{ opacity: 0.5; cursor: not-allowed; }}
@@ -42,7 +46,7 @@ tr.flash {{ animation: flashRow 1.2s ease-out; }}
 <h2>Watchlist</h2>
 <form method="POST" action="/tickers/remove" id="removeForm">
 <table>
-<tr><th></th><th>Ticker</th><th>Price</th><th>Change</th></tr>
+<tr><th></th><th class="sortable" data-sort="ticker">Ticker<span class="sortArrow active">&#9660;</span></th><th>Price</th><th class="sortable" data-sort="change">Change<span class="sortArrow">&#8645;</span></th></tr>
 {rows}
 </table>
 <button type="submit" id="removeBtn" disabled>Remove selected</button>
@@ -69,6 +73,49 @@ removeForm.addEventListener("submit", function () {{
     removeBtn.disabled = true;
     removeBtn.textContent = "Removing...";
 }});
+
+// Click a "Ticker"/"Change" header to sort the watchlist table by it,
+// toggling ascending/descending on repeat clicks - client-side only, no
+// new request to this fragile one-connection-at-a-time server. Sorts by
+// each row's data-change attribute rather than parsing the "▲ 1.75%"
+// display text, so it stays correct regardless of that formatting -
+// paintQuote() keeps data-change in sync on every live update too.
+var sortableHeaders = document.querySelectorAll("th.sortable");
+var tableBody = removeForm.querySelector("table").tBodies[0];
+var sortState = {{ key: "ticker", dir: 1 }};  // matches the server's default render order (sorted(tickers))
+
+function sortRows(key) {{
+    var dir = sortState.key === key ? -sortState.dir : 1;
+    sortState = {{ key: key, dir: dir }};
+    var rows = Array.prototype.slice.call(tableBody.querySelectorAll("tr[data-ticker]"));
+    rows.sort(function (a, b) {{
+        var va, vb;
+        if (key === "ticker") {{
+            va = a.dataset.ticker;
+            vb = b.dataset.ticker;
+        }} else {{
+            va = parseFloat(a.dataset.change) || 0;
+            vb = parseFloat(b.dataset.change) || 0;
+        }}
+        if (va < vb) {{ return -dir; }}
+        if (va > vb) {{ return dir; }}
+        return 0;
+    }});
+    for (var i = 0; i < rows.length; i++) {{ tableBody.appendChild(rows[i]); }}
+    for (var j = 0; j < sortableHeaders.length; j++) {{
+        var th = sortableHeaders[j];
+        var arrow = th.querySelector(".sortArrow");
+        var active = th.dataset.sort === key;
+        arrow.textContent = active ? (dir === 1 ? "▼" : "▲") : "⇅";
+        arrow.classList.toggle("active", active);
+    }}
+}}
+
+for (var k = 0; k < sortableHeaders.length; k++) {{
+    (function (th) {{
+        th.addEventListener("click", function () {{ sortRows(th.dataset.sort); }});
+    }})(sortableHeaders[k]);
+}}
 </script>
 <script>
 // Polls /quotes.json to keep the table's price/change cells current
@@ -97,10 +144,11 @@ function paintQuote(ticker, quote) {{
     priceCell.textContent = newPrice;
     changeCell.textContent = newChange;
     changeCell.style.color = changePercent > 0 ? "#0a0" : changePercent < 0 ? "#c00" : "#666";
+    var row = priceCell.parentElement;
+    row.dataset.change = changePercent; // keeps the "Change" column sort correct after a live update
     if (changed) {{
         // priceCell's direct parent is the <tr> - flash the whole row so
         // an update is obvious at a glance, not just a quiet text change.
-        var row = priceCell.parentElement;
         row.classList.remove("flash");
         void row.offsetWidth; // force a reflow so the animation restarts if still mid-flash
         row.classList.add("flash");
@@ -325,28 +373,32 @@ def _format_quote_cells(ticker, quotes):
     """quotes holds whatever main.py's `quotes` dict currently has for
     this symbol: absent (never fetched yet), None (last fetch failed),
     or a (price, change_percent) tuple — same shape main.py's own
-    display code reads (see format_quote() call site)."""
+    display code reads (see format_quote() call site). The fourth
+    return value is the raw signed change (0 with no quote yet), used
+    to sort the "Change" column correctly regardless of display
+    formatting — see the sortRows() script."""
     quote = quotes.get(ticker)
     if quote is None:
-        return "...", "...", "#666"
+        return "...", "...", "#666", 0
     price, change_percent = quote
     arrow = "▲ " if change_percent > 0 else "▼ " if change_percent < 0 else "▶ "
     price_text = "${:.2f}".format(price)
     change_text = "{}{:.2f}%".format(arrow, abs(change_percent))
     color = "#0a0" if change_percent > 0 else "#c00" if change_percent < 0 else "#666"
-    return price_text, change_text, color
+    return price_text, change_text, color, change_percent
 
 
 def _render_ticker_rows(tickers, quotes):
     rows = []
     for t in tickers:
-        price, change, color = _format_quote_cells(t, quotes)
+        price, change, color, change_raw = _format_quote_cells(t, quotes)
         rows.append(
-            '<tr><td><input type="checkbox" name="remove" value="{t}"></td>'
+            '<tr data-ticker="{t}" data-change="{change_raw}">'
+            '<td><input type="checkbox" name="remove" value="{t}"></td>'
             "<td>{t}</td>"
             '<td id="price-{t}">{price}</td>'
             '<td id="change-{t}" style="color:{color}">{change}</td></tr>'.format(
-                t=t, price=price, change=change, color=color
+                t=t, price=price, change=change, color=color, change_raw=change_raw
             )
         )
     return "".join(rows)
@@ -483,35 +535,35 @@ def poll(server_socket, tickers, quotes=None):
             to_remove = set(_parse_multi(body, "remove"))
             new_tickers = sorted(t for t in tickers if t not in to_remove)
             if not new_tickers:
-                conn.send(b"HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n\r\n" + _render_page(
+                conn.sendall(b"HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n\r\n" + _render_page(
                     tickers, quotes, remove_error="Can't remove every ticker — watchlist would be empty"
                 ))
             else:
                 tickers = new_tickers
                 save_tickers(tickers)
-                conn.send(b"HTTP/1.1 303 See Other\r\nLocation: /\r\n\r\n")
+                conn.sendall(b"HTTP/1.1 303 See Other\r\nLocation: /\r\n\r\n")
         elif method == "POST" and path == "/tickers/add":
             fields = _parse_form(body)
             symbol = fields.get("ticker", "").strip().upper()
             error = _validate_add(symbol, tickers)
             if error:
-                conn.send(b"HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n\r\n" + _render_page(
+                conn.sendall(b"HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n\r\n" + _render_page(
                     tickers, quotes, add_error=error, new_ticker_value=symbol
                 ))
             else:
                 tickers = sorted(tickers + [symbol])
                 save_tickers(tickers)
-                conn.send(b"HTTP/1.1 303 See Other\r\nLocation: /\r\n\r\n")
+                conn.sendall(b"HTTP/1.1 303 See Other\r\nLocation: /\r\n\r\n")
         elif method == "POST" and path == "/dst":
             # Unchecked checkboxes aren't submitted at all by the
             # browser, so presence in the form fields *is* the value.
             fields = _parse_form(body)
             dst.save("local_dst" in fields, "market_dst" in fields)
-            conn.send(b"HTTP/1.1 303 See Other\r\nLocation: /\r\n\r\n")
+            conn.sendall(b"HTTP/1.1 303 See Other\r\nLocation: /\r\n\r\n")
         elif method == "POST" and path == "/quote-mode":
             fields = _parse_form(body)
             quote_mode.save("live" in fields)
-            conn.send(b"HTTP/1.1 303 See Other\r\nLocation: /\r\n\r\n")
+            conn.sendall(b"HTTP/1.1 303 See Other\r\nLocation: /\r\n\r\n")
         elif method == "POST" and path == "/dim-level":
             fields = _parse_form(body)
             try:
@@ -519,11 +571,11 @@ def poll(server_socket, tickers, quotes=None):
             except ValueError:
                 percent = dim_level.load()
             dim_level.save(percent)
-            conn.send(b"HTTP/1.1 303 See Other\r\nLocation: /\r\n\r\n")
+            conn.sendall(b"HTTP/1.1 303 See Other\r\nLocation: /\r\n\r\n")
         elif method == "GET" and path == "/quotes.json":
-            conn.send(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n" + _quotes_json(tickers, quotes))
+            conn.sendall(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n" + _quotes_json(tickers, quotes))
         else:
-            conn.send(b"HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n\r\n" + _render_page(tickers, quotes))
+            conn.sendall(b"HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n\r\n" + _render_page(tickers, quotes))
     except Exception as exc:
         print("web request failed", exc)
     finally:
