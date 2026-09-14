@@ -197,4 +197,5 @@ def _handle_message(message, quotes):
         if symbol is None or price is None or not prev_close:
             continue
         change_percent = (price - prev_close) / prev_close * 100
-        quotes[symbol] = (price, change_percent)
+        change_dollar = price - prev_close
+        quotes[symbol] = (price, change_percent, change_dollar)
