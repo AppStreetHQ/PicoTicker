@@ -84,9 +84,13 @@ var sortableHeaders = document.querySelectorAll("th.sortable");
 var tableBody = removeForm.querySelector("table").tBodies[0];
 var sortState = {{ key: "ticker", dir: 1 }};  // matches the server's default render order (sorted(tickers))
 
-function sortRows(key) {{
-    var dir = sortState.key === key ? -sortState.dir : 1;
-    sortState = {{ key: key, dir: dir }};
+// Reorders the rows already in the DOM to match sortState, without
+// changing sortState itself - used both by a header click (after it
+// decides the new key/direction below) and by pollQuotes() after a live
+// price update, to keep the table in sorted order as values change
+// rather than only re-sorting on the next manual click.
+function applySort() {{
+    var key = sortState.key, dir = sortState.dir;
     var rows = Array.prototype.slice.call(tableBody.querySelectorAll("tr[data-ticker]"));
     rows.sort(function (a, b) {{
         var va, vb;
@@ -102,11 +106,16 @@ function sortRows(key) {{
         return 0;
     }});
     for (var i = 0; i < rows.length; i++) {{ tableBody.appendChild(rows[i]); }}
+}}
+
+function sortRows(key) {{
+    sortState = {{ key: key, dir: sortState.key === key ? -sortState.dir : 1 }};
+    applySort();
     for (var j = 0; j < sortableHeaders.length; j++) {{
         var th = sortableHeaders[j];
         var arrow = th.querySelector(".sortArrow");
-        var active = th.dataset.sort === key;
-        arrow.textContent = active ? (dir === 1 ? "▼" : "▲") : "⇅";
+        var active = th.dataset.sort === sortState.key;
+        arrow.textContent = active ? (sortState.dir === 1 ? "▼" : "▲") : "⇅";
         arrow.classList.toggle("active", active);
     }}
 }}
@@ -160,6 +169,7 @@ function pollQuotes() {{
         .then(function (r) {{ return r.json(); }})
         .then(function (data) {{
             for (var ticker in data) {{ paintQuote(ticker, data[ticker]); }}
+            applySort(); // re-apply the active sort now that values may have changed
         }})
         .catch(function () {{}});  // a dropped request just waits for the next tick
 }}
