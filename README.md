@@ -123,13 +123,16 @@ edited through a web page — see [Editing your ticker list](#editing-your-ticke
 
 ### 4. Upload the code
 
-Copy every `.py` file in this repo (`boot.py`, `main.py`, `wifi.py`,
-`web.py`, `display.py`, `font3x5.py`, `stocks.py`, `clock.py`,
-`market.py`, `dst.py`) plus your new `config.py` onto the root of the
-device's filesystem. With
+Copy every `.py` file in this repo (`boot.py`, `boot_diagnostics.py`,
+`clock.py`, `diagnostics_log.py`, `dim_level.py`, `display.py`,
+`dst.py`, `finnhub_ws.py`, `font3x5.py`, `live_quotes.py`, `main.py`,
+`market.py`, `quote_mode.py`, `stocks.py`, `web.py`, `wifi.py`) plus
+your new `config.py` onto the root of the device's filesystem. With
 Thonny, open each file and use "Save as... Raspberry Pi Pico"; with
 `mpremote` installed, `mpremote cp *.py :` from this directory does it
-in one go.
+in one go — it'll also harmlessly copy `config.example.py` alongside
+your real `config.py`, which nothing imports, so it's fine to leave on
+the device or delete it afterward.
 
 ### 5. First boot
 
@@ -216,12 +219,21 @@ gets applied without a redeploy.
 ### Editing your ticker list
 
 The web page shows a **Watchlist** table of your current symbols, each
-with its live price and change (green/red), a checkbox, and a "Remove
-selected" button — and below that, an **Add a stock** box for adding
-one symbol at a time. Prices refresh in place (no reload needed) every
-2 seconds while on live websocket prices, or every 60 seconds — the
-same cadence `main.py` itself re-fetches at — on REST:
+with its live price and change — shown as both the dollar amount and
+percentage, e.g. "▲ 2.44 (0.73%)", colour-coded green/red — a checkbox,
+and a "Remove selected" button — and below that, an **Add a stock** box
+for adding one symbol at a time. Prices refresh in place (no reload
+needed) every 2 seconds while on live websocket prices, or every 60
+seconds — the same cadence `main.py` itself re-fetches at — on REST,
+briefly flashing a row when its value actually changes so the refresh
+is visibly happening rather than silently overwriting identical text
+most of the time:
 
+- Click the **Ticker** or **Change** column header to sort the table by
+  it, toggling ascending/descending on repeat clicks — entirely
+  client-side, no extra request to the device. Sorting re-applies
+  automatically after each live update too, so the table stays ordered
+  as prices move rather than only on the next click.
 - **Remove selected** is disabled until at least one row is checked,
   and blocked from removing every ticker — the watchlist can't go
   empty.
@@ -232,7 +244,8 @@ same cadence `main.py` itself re-fetches at — on REST:
   won't add it. This check is a live API call, so don't worry if
   "Adding..." sits there for a moment. Hidden once you're at the
   50-symbol cap.
-- Symbols are always shown and stored in alphabetical order.
+- Symbols are stored alphabetically by default, though sorting the
+  table only changes the on-screen order, not the stored list.
 - Capped at 50 symbols — the limit on Finnhub's free-tier websocket
   feed (see [Choosing REST or live prices](#choosing-rest-or-live-prices)),
   enforced here regardless of which price source you're currently on.
@@ -246,6 +259,30 @@ The same setting is also on the web page, under "Price source"; both
 write to the same place, so whichever you use last is what sticks. See
 [Choosing REST or live prices](#choosing-rest-or-live-prices) for why
 you'd want either one.
+
+### Diagnostics
+
+Further down the web page, a "Diagnostics" section shows whether the
+device is currently live-connected to Finnhub's websocket, how long
+the current boot has been running, and a recent-first list of notable
+events — stream drops (with Finnhub's own close reason, if it gave
+one), watchdog recoveries, and market-open/closed transitions.
+Persisted to flash (`diagnostics_log.json`) rather than kept purely in
+memory, since the event most worth diagnosing — a watchdog-triggered
+reboot — is exactly the kind of thing that would otherwise wipe an
+in-memory log clean at the moment it's most needed. Bounded to the
+most recent 20 entries rather than kept forever. An entry logged
+before the boot-time clock sync succeeds shows as "time unknown"
+rather than a nonsensical duration, since MicroPython's clock starts
+at a fixed default epoch (2021-01-01) until synced.
+
+### Closed-market dimming
+
+Also on the web page, a "Dim level" field sets the brightness (as a
+percentage of full) tickers are shown at while the market's closed —
+useful if the device sits somewhere a full-brightness display would be
+distracting outside trading hours. Saves immediately, no redeploy
+needed.
 
 ### Daylight saving
 
@@ -557,6 +594,11 @@ pass — just the current one's REST call.
 
 ```
 boot.py             — runs once on power-up, connects to WiFi
+boot_diagnostics.py — tracks how long the current boot has been running,
+                       for the web UI's diagnostics page
+diagnostics_log.py  — persisted, rolling log of notable events (stream
+                       drops, watchdog recoveries, market-status changes)
+                       for the same diagnostics page
 main.py             — fetch_loop() on the main core, display_loop() on
                        a second thread (via _thread) on the other core
 wifi.py             — WiFi connect/retry logic; also remembers the
@@ -585,6 +627,8 @@ quote_mode.json     — the REST-vs-live setting (created the first time
                        you save one from the web UI or press Button A;
                        not in this repo, lives on the device)
 dim_level.json      — the closed-market dim percentage (same as above —
+                       created automatically, not in this repo)
+diagnostics_log.json — the persisted event log itself (same as above —
                        created automatically, not in this repo)
 media/demo.mp4      — short demo video, linked at the top of this README
 ```
