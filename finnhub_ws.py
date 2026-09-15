@@ -40,7 +40,18 @@ import time
 
 HOST = "ws.finnhub.io"
 PORT = 443
-CONNECT_TIMEOUT_SECONDS = 15
+# main.py's hardware watchdog fires after 8s (WATCHDOG_TIMEOUT_MS) with
+# no feed, and connect() below runs entirely on that same thread with
+# no feed of its own in between its steps (unlike the REST fetch path,
+# which threads a feed callback through - see fetch_and_store()). This
+# used to be 15s, comfortably past the watchdog's window on its own:
+# any time Finnhub (or the path to it) was merely slow rather than
+# actually down, the watchdog would fire mid-connect and reboot the
+# board - indistinguishable from a genuine hang, and very likely the
+# real explanation for this project's original "recovers about once an
+# hour" mystery. Kept safely under 8s, with margin for the rest of the
+# loop iteration around it.
+CONNECT_TIMEOUT_SECONDS = 3
 PING_INTERVAL_SECONDS = 30
 
 
@@ -79,8 +90,16 @@ class WebSocket:
         ).format(self._api_key, HOST, key)
         self._sock.write(request.encode())
 
+        # Each read(1) below is bounded by the raw socket's timeout, but
+        # not the loop's total time — a peer trickling one byte just
+        # under that timeout apart could keep this looping well past
+        # the watchdog's window otherwise (the same class of bug fixed
+        # in web.py's _recv_request()).
+        deadline = time.ticks_add(time.ticks_ms(), CONNECT_TIMEOUT_SECONDS * 1000)
         response = b""
         while b"\r\n\r\n" not in response:
+            if time.ticks_diff(deadline, time.ticks_ms()) <= 0:
+                raise OSError("websocket handshake timed out")
             # One byte at a time deliberately — see module docstring.
             chunk = self._sock.read(1)
             if not chunk:

@@ -511,9 +511,24 @@ def _recv_request(conn):
     TCP segment separate from the headers, so a single recv() isn't
     guaranteed to capture it — keep reading until the header/body
     separator has arrived, then keep reading the body until it matches
-    Content-Length."""
+    Content-Length.
+
+    conn's socket timeout (see poll()) bounds each individual recv(),
+    but not the total time spent looping here — a client that trickles
+    just enough bytes to keep resetting that per-call timeout (a slow
+    mobile connection, a backgrounded/throttled browser tab) could keep
+    this running indefinitely otherwise. fetch_loop()'s single call to
+    web.poll() isn't itself wrapped with periodic watchdog feeds the way
+    _service_web()'s multi-request loop is, so a hang here long enough
+    would starve the watchdog and force a reboot - exactly the kind of
+    intermittent, hard-to-catch "recovery" this project's diagnostics
+    log was built to track down. Bounding the total time, not just each
+    recv(), keeps this safely under the watchdog's window regardless."""
+    deadline = time.ticks_add(time.ticks_ms(), 3000)
     data = b""
     while b"\r\n\r\n" not in data:
+        if time.ticks_diff(deadline, time.ticks_ms()) <= 0:
+            return data
         chunk = conn.recv(2048)
         if not chunk:
             return data
@@ -527,6 +542,8 @@ def _recv_request(conn):
             break
 
     while len(body) < content_length:
+        if time.ticks_diff(deadline, time.ticks_ms()) <= 0:
+            break
         chunk = conn.recv(2048)
         if not chunk:
             break
