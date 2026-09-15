@@ -663,3 +663,12 @@ A few honest caveats, so they don't come as a surprise:
   run. A full reset (soft or hard) always clears it cleanly; that's
   the one to reach for. This doesn't affect normal use, only
   interactive development.
+- **`main.py`, `stocks.py`, `live_quotes.py`, and `web.py` share one
+  quote shape** — a `(price, change_percent, change_dollar)` tuple —
+  and none of them declares it anywhere a linter or import error would
+  catch. If a change to that shape only gets deployed to some of those
+  four files (e.g. redeploying just `web.py` after a fix, without also
+  pushing the others), every web request crashes instantly with `need
+  more than 2 values to unpack` — confirmed the hard way. When editing
+  anything that touches quote tuples, redeploy all four files together,
+  not just the one you changed.
