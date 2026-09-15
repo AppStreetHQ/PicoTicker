@@ -91,8 +91,8 @@ var sortState = {{ key: "ticker", dir: 1 }};  // matches the server's default re
 // rather than only re-sorting on the next manual click.
 function applySort() {{
     var key = sortState.key, dir = sortState.dir;
-    var rows = Array.prototype.slice.call(tableBody.querySelectorAll("tr[data-ticker]"));
-    rows.sort(function (a, b) {{
+    var currentRows = Array.prototype.slice.call(tableBody.querySelectorAll("tr[data-ticker]"));
+    var rows = currentRows.slice().sort(function (a, b) {{
         var va, vb;
         if (key === "ticker") {{
             va = a.dataset.ticker;
@@ -105,7 +105,21 @@ function applySort() {{
         if (va > vb) {{ return dir; }}
         return 0;
     }});
-    for (var i = 0; i < rows.length; i++) {{ tableBody.appendChild(rows[i]); }}
+    // appendChild always moves the node, even when it's already in the
+    // right spot - and reparenting an element mid-CSS-animation
+    // restarts that animation in most browsers. Sorting by "Change"
+    // reorders on nearly every poll as prices tick, so without this
+    // check a row's flash kept getting retriggered by unrelated sort
+    // churn (every other row shifting around it) rather than an actual
+    // value change of its own - confirmed as the cause of rows
+    // "flashing with no price change" once sorted by Change. Compared
+    // against currentRows (the pre-sort order of just the data rows),
+    // not tableBody.children directly - the table has no <thead>, so
+    // the browser's auto-generated tbody also holds the header row at
+    // index 0, which would throw this off by one.
+    for (var i = 0; i < rows.length; i++) {{
+        if (currentRows[i] !== rows[i]) {{ tableBody.appendChild(rows[i]); }}
+    }}
 }}
 
 function sortRows(key) {{
