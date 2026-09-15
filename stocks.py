@@ -30,7 +30,10 @@ def _fetch_quote_json(symbol):
 
 
 def fetch_quote(symbol):
-    """Return (price, change_percent) for a symbol, or None on failure."""
+    """Return (price, change_percent, change_dollar) for a symbol, or None
+    on failure. change_dollar is only used by the web UI's watchlist
+    table (see web.py) - the on-device scroll display (format_quote()
+    below) still only ever shows change_percent."""
     try:
         data = _fetch_quote_json(symbol)
         price = data.get("c")
@@ -38,7 +41,8 @@ def fetch_quote(symbol):
         if not price or not prev_close:
             return None
         change_percent = (price - prev_close) / prev_close * 100
-        return price, change_percent
+        change_dollar = price - prev_close
+        return price, change_percent, change_dollar
     except Exception as exc:
         print("fetch_quote failed for", symbol, exc)
         return None
