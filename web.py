@@ -174,7 +174,28 @@ function pollQuotes() {{
         .catch(function () {{}});  // a dropped request just waits for the next tick
 }}
 
-setInterval(pollQuotes, pollInterval);
+// Pauses polling while the tab isn't visible (a backgrounded tab has no
+// reason to keep hitting this fragile one-connection-at-a-time server -
+// every tick spent here is one an add/remove/toggle POST from another
+// tab has to wait behind) and does an immediate refresh on return
+// rather than waiting out a stale interval (up to 60s in REST mode).
+var pollTimer = null;
+
+function startPolling() {{
+    if (pollTimer) {{ return; }}
+    pollQuotes();
+    pollTimer = setInterval(pollQuotes, pollInterval);
+}}
+
+function stopPolling() {{
+    if (pollTimer) {{ clearInterval(pollTimer); pollTimer = null; }}
+}}
+
+document.addEventListener("visibilitychange", function () {{
+    if (document.hidden) {{ stopPolling(); }} else {{ startPolling(); }}
+}});
+
+if (!document.hidden) {{ startPolling(); }}
 </script>
 
 {add_section}
