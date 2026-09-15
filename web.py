@@ -84,13 +84,9 @@ var sortableHeaders = document.querySelectorAll("th.sortable");
 var tableBody = removeForm.querySelector("table").tBodies[0];
 var sortState = {{ key: "ticker", dir: 1 }};  // matches the server's default render order (sorted(tickers))
 
-// Reorders the rows already in the DOM to match sortState, without
-// changing sortState itself - used both by a header click (after it
-// decides the new key/direction below) and by pollQuotes() after a live
-// price update, to keep the table in sorted order as values change
-// rather than only re-sorting on the next manual click.
-function applySort() {{
-    var key = sortState.key, dir = sortState.dir;
+function sortRows(key) {{
+    var dir = sortState.key === key ? -sortState.dir : 1;
+    sortState = {{ key: key, dir: dir }};
     var rows = Array.prototype.slice.call(tableBody.querySelectorAll("tr[data-ticker]"));
     rows.sort(function (a, b) {{
         var va, vb;
@@ -106,16 +102,11 @@ function applySort() {{
         return 0;
     }});
     for (var i = 0; i < rows.length; i++) {{ tableBody.appendChild(rows[i]); }}
-}}
-
-function sortRows(key) {{
-    sortState = {{ key: key, dir: sortState.key === key ? -sortState.dir : 1 }};
-    applySort();
     for (var j = 0; j < sortableHeaders.length; j++) {{
         var th = sortableHeaders[j];
         var arrow = th.querySelector(".sortArrow");
-        var active = th.dataset.sort === sortState.key;
-        arrow.textContent = active ? (sortState.dir === 1 ? "▼" : "▲") : "⇅";
+        var active = th.dataset.sort === key;
+        arrow.textContent = active ? (dir === 1 ? "▼" : "▲") : "⇅";
         arrow.classList.toggle("active", active);
     }}
 }}
@@ -145,10 +136,10 @@ function paintQuote(ticker, quote) {{
         changeCell.style.color = "#666";
         return;
     }}
-    var price = quote[0], changePercent = quote[1], changeDollar = quote[2];
+    var price = quote[0], changePercent = quote[1];
     var arrow = changePercent > 0 ? "▲ " : changePercent < 0 ? "▼ " : "▶ ";
     var newPrice = "$" + price.toFixed(2);
-    var newChange = arrow + Math.abs(changeDollar).toFixed(2) + " (" + Math.abs(changePercent).toFixed(2) + "%)";
+    var newChange = arrow + Math.abs(changePercent).toFixed(2) + "%";
     var changed = priceCell.textContent !== newPrice || changeCell.textContent !== newChange;
     priceCell.textContent = newPrice;
     changeCell.textContent = newChange;
@@ -169,7 +160,6 @@ function pollQuotes() {{
         .then(function (r) {{ return r.json(); }})
         .then(function (data) {{
             for (var ticker in data) {{ paintQuote(ticker, data[ticker]); }}
-            applySort(); // re-apply the active sort now that values may have changed
         }})
         .catch(function () {{}});  // a dropped request just waits for the next tick
 }}
@@ -382,21 +372,18 @@ def _format_duration(seconds):
 def _format_quote_cells(ticker, quotes):
     """quotes holds whatever main.py's `quotes` dict currently has for
     this symbol: absent (never fetched yet), None (last fetch failed),
-    or a (price, change_percent, change_dollar) tuple — same shape
-    main.py's own display code reads (see format_quote() call site),
-    though main.py's on-device scroll text still only ever shows
-    change_percent; change_dollar exists for this web table, matching
-    PicoTank's watchlist. The fourth return value here is the raw signed
-    % change (0 with no quote yet), used to sort the "Change" column
-    correctly regardless of display formatting — see the sortRows()
-    script."""
+    or a (price, change_percent) tuple — same shape main.py's own
+    display code reads (see format_quote() call site). The fourth
+    return value is the raw signed change (0 with no quote yet), used
+    to sort the "Change" column correctly regardless of display
+    formatting — see the sortRows() script."""
     quote = quotes.get(ticker)
     if quote is None:
         return "...", "...", "#666", 0
-    price, change_percent, change_dollar = quote
+    price, change_percent = quote
     arrow = "▲ " if change_percent > 0 else "▼ " if change_percent < 0 else "▶ "
     price_text = "${:.2f}".format(price)
-    change_text = "{}{:.2f} ({:.2f}%)".format(arrow, abs(change_dollar), abs(change_percent))
+    change_text = "{}{:.2f}%".format(arrow, abs(change_percent))
     color = "#0a0" if change_percent > 0 else "#c00" if change_percent < 0 else "#666"
     return price_text, change_text, color, change_percent
 
@@ -418,15 +405,14 @@ def _render_ticker_rows(tickers, quotes):
 
 
 def _quotes_json(tickers, quotes):
-    """[price, change_percent, change_dollar] per ticker for the page's
-    polling script (see /quotes.json below) — a list rather than
-    _format_quote_cells()'s pre-formatted strings, so the client can
-    recolor/format live without a round-trip, and null for a ticker with
-    nothing fetched yet."""
+    """[price, change_percent] per ticker for the page's polling script
+    (see /quotes.json below) — a list rather than _format_quote_cells()'s
+    pre-formatted strings, so the client can recolor/format live without
+    a round-trip, and null for a ticker with nothing fetched yet."""
     data = {}
     for t in tickers:
         quote = quotes.get(t)
-        data[t] = None if quote is None else [quote[0], quote[1], quote[2]]
+        data[t] = None if quote is None else [quote[0], quote[1]]
     return json.dumps(data).encode()
 
 
@@ -535,8 +521,8 @@ def poll(server_socket, tickers, quotes=None):
     """Check for one pending request and handle it if there is one.
     Returns the (possibly updated) tickers list. Safe to call every
     loop iteration — returns immediately when nothing's waiting.
-    quotes, if given, is main.py's live ticker->(price, change_percent,
-    change_dollar) dict, used to show prices in the watchlist table — passed in rather
+    quotes, if given, is main.py's live ticker->(price, change_percent)
+    dict, used to show prices in the watchlist table — passed in rather
     than imported, to keep this module self-contained."""
     quotes = quotes if quotes is not None else {}
     try:

@@ -348,7 +348,7 @@ def _render_ticker(symbol):
         else:
             display.scroll_text(symbol + " ERROR", DOWN_COLOR, speed=SCROLL_SPEED)
     else:
-        price, change_percent, _change_dollar = quote  # change_dollar is only used by the web UI's table
+        price, change_percent = quote
         color = UP_COLOR if change_percent >= 0 else DOWN_COLOR
         if not market_open:
             color = dim(color)
