@@ -1,8 +1,14 @@
 # Copy this file to config.py and fill in your own values.
 # config.py is gitignored — never commit real credentials.
 
-WIFI_SSID = "your-wifi-name"
-WIFI_PASSWORD = "your-wifi-password"
+# Prioritised list of (ssid, password) pairs - tried in order at boot and
+# on reconnect, falling through to the next one if a network isn't in
+# range or the connection attempt fails. Add more entries for fallback
+# networks (e.g. a phone hotspot).
+WIFI_NETWORKS = [
+    ("your-wifi-name", "your-wifi-password"),
+    # ("fallback-network-name", "fallback-password"),
+]
 
 # Free tier key from https://finnhub.io/
 FINNHUB_API_KEY = "your-finnhub-api-key"

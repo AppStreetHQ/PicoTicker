@@ -106,11 +106,18 @@ In this repo, copy `config.example.py` to a new file named `config.py`
 and fill in your own values:
 
 ```python
-WIFI_SSID = "your-wifi-name"
-WIFI_PASSWORD = "your-wifi-password"
+WIFI_NETWORKS = [
+    ("your-wifi-name", "your-wifi-password"),
+    # ("fallback-network-name", "fallback-password"),
+]
 FINNHUB_API_KEY = "your-finnhub-api-key"
 TICKERS = ["AAPL", "MSFT", "TSLA"]   # starting symbols — see note below
 ```
+
+`WIFI_NETWORKS` is a prioritised list — networks are tried in order at
+boot and on reconnect, falling through to the next one if a network
+isn't in range or the connection fails. Add extra entries for fallback
+networks (e.g. a phone hotspot).
 
 `config.py` is gitignored on purpose, since it holds your WiFi password
 and API key — never commit it or share it publicly. `config.example.py`

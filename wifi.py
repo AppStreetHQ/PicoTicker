@@ -13,12 +13,17 @@ def _remember_ip(wlan):
         ip_address = wlan.ifconfig()[0]
 
 
-def ensure_connected(attempts=5, wait_per_attempt=10, feed=None):
-    """feed, if given, is called once a second throughout the retry
+def ensure_connected(attempts=3, wait_per_network=10, feed=None):
+    """Tries every (ssid, password) in config.WIFI_NETWORKS in priority
+    order, falling through to the next one if a network isn't in range or
+    the connection attempt fails - then repeats the whole list up to
+    attempts times, in case a failure was transient.
+
+    feed, if given, is called once a second throughout the retry
     wait — main.py passes its own watchdog-feed function here, since up
-    to attempts*wait_per_attempt seconds (50s by default) of legitimate
-    reconnection retrying would otherwise starve a watchdog with a
-    hardware ceiling of ~8s."""
+    to attempts*len(config.WIFI_NETWORKS)*wait_per_network seconds (30s by
+    default for one network) of legitimate reconnection retrying would
+    otherwise starve a watchdog with a hardware ceiling of ~8s."""
     wlan = network.WLAN(network.STA_IF)
     wlan.active(True)
 
@@ -26,15 +31,16 @@ def ensure_connected(attempts=5, wait_per_attempt=10, feed=None):
         if wlan.isconnected():
             _remember_ip(wlan)
             return wlan
-        print("wifi connect attempt", attempt + 1)
-        wlan.connect(config.WIFI_SSID, config.WIFI_PASSWORD)
-        for _ in range(wait_per_attempt):
-            if wlan.isconnected():
-                _remember_ip(wlan)
-                return wlan
-            if feed is not None:
-                feed()
-            time.sleep(1)
-        print("  status:", wlan.status())
+        for ssid, password in config.WIFI_NETWORKS:
+            print("wifi connect attempt", attempt + 1, "-", ssid)
+            wlan.connect(ssid, password)
+            for _ in range(wait_per_network):
+                if wlan.isconnected():
+                    _remember_ip(wlan)
+                    return wlan
+                if feed is not None:
+                    feed()
+                time.sleep(1)
+            print("  status:", wlan.status())
 
     return wlan
