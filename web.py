@@ -105,20 +105,26 @@ function applySort() {{
         if (va > vb) {{ return dir; }}
         return 0;
     }});
-    // appendChild always moves the node, even when it's already in the
-    // right spot - and reparenting an element mid-CSS-animation
-    // restarts that animation in most browsers. Sorting by "Change"
-    // reorders on nearly every poll as prices tick, so without this
-    // check a row's flash kept getting retriggered by unrelated sort
-    // churn (every other row shifting around it) rather than an actual
-    // value change of its own - confirmed as the cause of rows
-    // "flashing with no price change" once sorted by Change. Compared
-    // against currentRows (the pre-sort order of just the data rows),
-    // not tableBody.children directly - the table has no <thead>, so
-    // the browser's auto-generated tbody also holds the header row at
-    // index 0, which would throw this off by one.
+    // Moves only the rows that are actually out of place, using
+    // insertBefore (not appendChild) to put each one exactly at index i -
+    // appendChild always moves a node to the very *end*, which only
+    // coincidentally lands it at the right index. The previous version of
+    // this loop compared against currentRows, a snapshot taken before any
+    // moves happened - once one row got appended-to-end, every row after
+    // it physically shifted, so later comparisons were checking stale,
+    // no-longer-true positions and could leave a row stuck in the wrong
+    // place (confirmed in PicoTank's identical code: sorting by Change
+    // ascending put a positive-% row at the very front instead of the
+    // most negative one). insertBefore against tableBody.children - a
+    // *live* collection that reflects moves as they happen, re-read fresh
+    // on every loop iteration - doesn't have this problem, so "skip if
+    // already at position i" is actually correct instead of only
+    // sometimes correct. +1 because the table has no <thead>, so the
+    // browser's auto-generated tbody also holds the header row at index 0.
     for (var i = 0; i < rows.length; i++) {{
-        if (currentRows[i] !== rows[i]) {{ tableBody.appendChild(rows[i]); }}
+        if (tableBody.children[i + 1] !== rows[i]) {{
+            tableBody.insertBefore(rows[i], tableBody.children[i + 1] || null);
+        }}
     }}
 }}
 
