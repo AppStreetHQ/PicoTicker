@@ -13,8 +13,33 @@ WIFI_NETWORKS = [
 # Free tier key from https://finnhub.io/
 FINNHUB_API_KEY = "your-finnhub-api-key"
 
-# Symbols to cycle through on the display
-TICKERS = ["AAPL", "GOOGL", "MSFT", "NVDA", "RKLB", "SPCX", "QQQ"]
+# Symbols to seed the watchlist with on first boot only — after that,
+# the live list lives in tickers.json and is edited from the web UI
+# (see README), so this never gets read again. A plain string of
+# symbols separated by spaces and/or commas is easiest to paste a long
+# list into (e.g. all 50 for heatmap mode); a Python list of quoted
+# symbols also still works.
+TICKERS = "AAPL GOOGL MSFT NVDA RKLB SPCX QQQ"
+
+# "scroll" (default) cycles one ticker at a time, scrolling its price
+# and percentage change across the display. "heatmap" instead shows
+# every ticker at once as a single graded-colour pixel in a 10x5 grid
+# (fits exactly 50 tickers, centered in the 16x7 matrix) — green for
+# up, red for down, brightness scaled by the size of the move. Meant
+# for a watchlist that's at or near the 50-symbol cap; with fewer
+# tickers the unused grid cells are simply left off.
+DISPLAY_MODE = "scroll"
+
+# In heatmap mode, the size of move (absolute %) that reaches full
+# colour brightness — anything at or beyond this is shown at full
+# saturation, smaller moves are dimmer, and a flat ticker still shows
+# a faint colour rather than going fully black.
+HEATMAP_SATURATION_PERCENT = 3.0
+
+# Seconds between heatmap redraws. Also how often Button A/X/Y presses
+# are noticed in heatmap mode, since there's no per-ticker cycle to
+# check them on.
+HEATMAP_REFRESH_SECONDS = 0.5
 
 # Finnhub only allows one open websocket connection per API key — so if
 # you're running more than one PicoTicker on the same key, only one of

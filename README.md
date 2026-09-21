@@ -111,7 +111,7 @@ WIFI_NETWORKS = [
     # ("fallback-network-name", "fallback-password"),
 ]
 FINNHUB_API_KEY = "your-finnhub-api-key"
-TICKERS = ["AAPL", "MSFT", "TSLA"]   # starting symbols — see note below
+TICKERS = "AAPL MSFT TSLA"   # starting symbols — see note below
 ```
 
 `WIFI_NETWORKS` is a prioritised list — networks are tried in order at
@@ -127,14 +127,20 @@ settings (refresh intervals, scroll speed, etc.) documented inline.
 Note on `TICKERS`: this only seeds the list the *first* time the board
 boots. After that, the live list lives in a file on the device and is
 edited through a web page — see [Editing your ticker list](#editing-your-ticker-list).
+It accepts a plain string of symbols separated by spaces and/or commas
+(`"AAPL MSFT TSLA"` or `"AAPL, MSFT, TSLA"`) — much easier to paste a
+long list into (e.g. all 50 for [heatmap mode](#heatmap-mode)) than
+getting a Python list's quotes and commas right by hand. The original
+`["AAPL", "MSFT", "TSLA"]` list form still works too, if you prefer it.
 
 ### 4. Upload the code
 
 Copy every `.py` file in this repo (`boot.py`, `boot_diagnostics.py`,
 `clock.py`, `diagnostics_log.py`, `dim_level.py`, `display.py`,
-`dst.py`, `finnhub_ws.py`, `font3x5.py`, `live_quotes.py`, `main.py`,
-`market.py`, `quote_mode.py`, `stocks.py`, `web.py`, `wifi.py`) plus
-your new `config.py` onto the root of the device's filesystem. With
+`display_mode.py`, `dst.py`, `finnhub_ws.py`, `font3x5.py`,
+`live_quotes.py`, `main.py`, `market.py`, `quote_mode.py`,
+`scroll_selection.py`, `stocks.py`, `tickers.py`, `web.py`, `wifi.py`)
+plus your new `config.py` onto the root of the device's filesystem. With
 Thonny, open each file and use "Save as... Raspberry Pi Pico"; with
 `mpremote` installed, `mpremote cp *.py :` from this directory does it
 in one go — it'll also harmlessly copy `config.example.py` alongside
@@ -167,7 +173,14 @@ fallen). While the market's closed, the same colours are used but
 dimmed, since the numbers aren't actively moving. If a symbol fails to
 fetch, it shows `SYMBOL ERROR`; if *every* symbol fails at once (a sign
 Finnhub itself is having trouble, not just one bad ticker), it shows a
-plain `API ERROR` instead.
+plain `API ERROR` instead. Which symbols actually get a turn can be
+narrowed to a subset — see [Editing your ticker list](#editing-your-ticker-list).
+
+This is "ticker mode" (`config.py`'s `DISPLAY_MODE = "scroll"`, the
+default) — see [Heatmap mode](#heatmap-mode) for the alternative that
+shows every symbol at once instead of cycling, and
+[Switching display mode](#switching-display-mode) for flipping between
+the two without a redeploy.
 
 ### Finding the web page
 
@@ -227,23 +240,31 @@ gets applied without a redeploy.
 
 The web page shows a **Watchlist** table of your current symbols, each
 with its live price and change — shown as both the dollar amount and
-percentage, e.g. "▲ 2.44 (0.73%)", colour-coded green/red — a checkbox,
-and a "Remove selected" button — and below that, an **Add a stock** box
-for adding one symbol at a time. Prices refresh in place (no reload
-needed) every 2 seconds while on live websocket prices, or every 60
-seconds — the same cadence `main.py` itself re-fetches at — on REST,
-briefly flashing a row when its value actually changes so the refresh
-is visibly happening rather than silently overwriting identical text
-most of the time:
+percentage, e.g. "▲ 2.44 (0.73%)", colour-coded green/red — a "remove"
+checkbox, a **Ticker mode** checkbox, and a single "Update" button —
+and below that, an **Add a stock** box for adding one symbol at a
+time. Prices refresh in place (no reload needed) every 2 seconds while
+on live websocket prices, or every 60 seconds — the same cadence
+`main.py` itself re-fetches at — on REST, briefly flashing a row when
+its value actually changes so the refresh is visibly happening rather
+than silently overwriting identical text most of the time:
 
 - Click the **Ticker** or **Change** column header to sort the table by
   it, toggling ascending/descending on repeat clicks — entirely
   client-side, no extra request to the device. Sorting re-applies
   automatically after each live update too, so the table stays ordered
   as prices move rather than only on the next click.
-- **Remove selected** is disabled until at least one row is checked,
-  and blocked from removing every ticker — the watchlist can't go
-  empty.
+- **Ticker mode** marks whether a symbol is cycled in ticker (scroll)
+  mode — useful once your watchlist is long enough that sitting
+  through every symbol takes a while. Checked (included) by default.
+  Doesn't affect [heatmap mode](#heatmap-mode), which always shows
+  every watchlist symbol regardless.
+- **Update** applies both columns' checkboxes together in one submit —
+  any "remove" ticks and the current state of every row's "Ticker
+  mode" box — rather than two separate save actions. It's disabled
+  until something in the table actually differs from what the page
+  loaded with, and blocked from removing every ticker — the watchlist
+  can't go empty.
 - **Add a stock**'s button stays disabled until what you've typed looks
   like a plausible ticker (1–6 letters/dots). On submit, the symbol
   gets checked against Finnhub's own symbol lookup before saving — if
@@ -256,6 +277,56 @@ most of the time:
 - Capped at 50 symbols — the limit on Finnhub's free-tier websocket
   feed (see [Choosing REST or live prices](#choosing-rest-or-live-prices)),
   enforced here regardless of which price source you're currently on.
+
+### Heatmap mode
+
+Setting `config.py`'s `DISPLAY_MODE = "heatmap"` (or pressing Button B —
+see [Switching display mode](#switching-display-mode)) swaps ticker
+(scroll) mode for a different use of the same 16×7 matrix: every
+watchlist symbol shown at once, as a single graded-colour pixel,
+instead of one symbol scrolling at a time. Laid out as a 10-wide ×
+5-tall grid (exactly 50 cells — the watchlist's own cap, see above)
+centered in the display, leaving a 3-pixel margin left/right and a
+1-pixel margin top/bottom.
+Cells fill in row by row, sorted by performance — biggest gainer first,
+biggest loser last, the usual way a stock heatmap orders itself, so the
+grid reads as a gradient rather than needing to hunt an alphabetical
+layout for the reddest/greenest cell. A symbol with no usable quote yet
+(not fetched, or errored) sorts to the very end, after every real
+number; with fewer than 50 symbols, the remaining cells are simply left
+off.
+
+Colour follows the same rule as ticker mode — green for up, red for
+down, dimmed while the market's closed (`dim_level`, same as ticker
+mode) — but instead of a second pixel or scrolling number to show *how
+much* a symbol has moved, each cell's brightness is graded by the size
+of the move: a flat symbol still shows a faint colour rather than going
+black, scaling up to full brightness at `HEATMAP_SATURATION_PERCENT`
+(3% by default) and beyond. A symbol that's errored shows a dim red
+regardless of direction; one that hasn't been fetched yet (fresh boot)
+shows off/black.
+
+Button behaviour is unchanged — X/Y/A/B still show the IP address, the
+clock, toggle REST/websocket prices, and toggle display mode, just
+checked once per `HEATMAP_REFRESH_SECONDS` redraw (0.5s by default)
+rather than once per scrolled symbol. The web UI's per-row **Ticker
+mode** checkbox has no effect here — heatmap mode always shows every
+watchlist symbol, since narrowing it down defeats the point of an
+at-a-glance overview.
+
+### Switching display mode
+
+Press **B** once (a quick press, not held like X/Y) to flip between
+ticker (scroll) mode and [heatmap mode](#heatmap-mode) — the display
+scrolls `HEATMAP MODE` or `TICKER MODE` once as confirmation, the same
+way Button A confirms a price-source switch below. `config.py`'s
+`DISPLAY_MODE` only matters for a device that's never had this touched
+— same relationship `USE_LIVE_QUOTES`/`quote_mode.json` have (see
+[Switching price source](#switching-price-source)): once B's been
+pressed, the persisted setting (`display_mode.json`) takes over, and
+switching back into ticker mode mid-pass through a long watchlist takes
+effect within about one symbol's scroll rather than waiting out however
+many are left in the current lap.
 
 ### Switching price source
 
@@ -581,11 +652,13 @@ pixels wide).
 sockets — no framework, because MicroPython doesn't really have one
 worth pulling in for a couple of forms. It's polled once per loop
 iteration from the fetch loop (a non-blocking `accept()`, so it never
-stalls fetching), handles exactly one request at a time, and keeps
-the mutable ticker list (`tickers.json`), DST toggles (`dst.json`),
-and price-source setting (`quote_mode.json`) on the device's flash
-rather than in `config.py`, which stays reserved for one-time secrets
-and settings.
+stalls fetching), handles exactly one request at a time, and drives
+the persisted settings each own module handles saving/loading for —
+the mutable ticker list (`tickers.py`'s `tickers.json`), the
+ticker-mode exclusion set (`scroll_selection.py`'s
+`scroll_selection.json`), DST toggles (`dst.json`), and price-source
+setting (`quote_mode.json`) — all on the device's flash rather than in
+`config.py`, which stays reserved for one-time secrets and settings.
 
 It's also polled more often than that whenever `main.py` is in the
 middle of a slow multi-ticker REST operation — a `refresh_quotes()`
@@ -611,7 +684,8 @@ main.py             — fetch_loop() on the main core, display_loop() on
 wifi.py             — WiFi connect/retry logic; also remembers the
                        board's IP once connected
 web.py              — the ticker-editing web server
-display.py          — wraps picounicorn.PicoUnicorn, scrolls text
+display.py          — wraps picounicorn.PicoUnicorn, scrolls text and
+                       draws the heatmap-mode grid
 font3x5.py          — the hand-drawn 3x5 pixel font
 stocks.py           — Finnhub REST API calls (quotes, market status, symbol lookup)
 finnhub_ws.py       — hand-rolled websocket client (RFC 6455) for Finnhub's
@@ -620,19 +694,32 @@ live_quotes.py      — connects/subscribes the trades stream and turns
                        incoming trades into live quotes
 quote_mode.py       — persisted REST-vs-live toggle, edited from the web
                        UI or Button A
+display_mode.py     — persisted ticker-vs-heatmap display mode, edited
+                       from Button B
+tickers.py          — persisted watchlist itself, edited from the web UI
+                       (add/remove) and seeded once from config.TICKERS
+scroll_selection.py — persisted set of tickers excluded from ticker
+                       (scroll) mode's cycle, edited per-row from the web UI
 clock.py            — NTP time sync and HH:MM formatting
 market.py           — local-clock gate for the Finnhub market-status check
 dst.py              — persisted DST toggle state, edited from the web UI
 dim_level.py        — persisted closed-market dim percentage, edited
                        from the web UI
 config.example.py   — copy to config.py and fill in your own secrets
-tickers.json        — the live, editable ticker list (created automatically
-                       on first boot; not in this repo, lives on the device)
+tickers.json        — the live, editable ticker list (tickers.py — created
+                       automatically on first boot; not in this repo, lives
+                       on the device)
 dst.json            — the two DST toggle states (same as above — created
                        automatically, not in this repo)
 quote_mode.json     — the REST-vs-live setting (created the first time
                        you save one from the web UI or press Button A;
                        not in this repo, lives on the device)
+display_mode.json   — the ticker-vs-heatmap display mode (same as above
+                       — created the first time you press Button B, not
+                       in this repo)
+scroll_selection.json — the ticker-mode exclusion set (same as above —
+                       created the first time a "Ticker mode" checkbox is
+                       unchecked and saved, not in this repo)
 dim_level.json      — the closed-market dim percentage (same as above —
                        created automatically, not in this repo)
 diagnostics_log.json — the persisted event log itself (same as above —

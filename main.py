@@ -8,9 +8,12 @@ import clock
 import config
 import diagnostics_log
 import dim_level
+import display_mode
 import live_quotes
 import market
 import quote_mode
+import scroll_selection
+import tickers as tickers_store
 import web
 import wifi
 from display import Display
@@ -21,6 +24,20 @@ display = Display()
 UP_COLOR = (0, 200, 60)
 DOWN_COLOR = (220, 30, 30)
 NEUTRAL_COLOR = (200, 200, 200)
+# 10x5 = exactly MAX_TICKERS (web.py) cells, centered in the 16x7
+# matrix by Display.draw_grid() — not config-tunable, since it's a
+# fact about this specific panel's geometry, not a per-device
+# preference like the settings below.
+HEATMAP_COLS = 10
+HEATMAP_ROWS = 5
+HEATMAP_SATURATION_PERCENT = getattr(config, "HEATMAP_SATURATION_PERCENT", 3.0)
+HEATMAP_REFRESH_SECONDS = getattr(config, "HEATMAP_REFRESH_SECONDS", 0.5)
+# Floor brightness (as a fraction of full colour) for a heatmap cell at
+# 0% change, so a flat ticker still reads as a faint colour rather than
+# going indistinguishable from an unused/off grid cell.
+HEATMAP_FLOOR = 0.15
+ERROR_COLOR = tuple(int(c * 0.3) for c in DOWN_COLOR)
+OFF_COLOR = (0, 0, 0)
 SCROLL_SPEED = getattr(config, "SCROLL_SPEED", 0.14)
 CLOSED_QUOTE_REFRESH_INTERVAL = getattr(config, "CLOSED_QUOTE_REFRESH_INTERVAL", 300)
 MARKET_WINDOW_REFRESH_INTERVAL = getattr(config, "MARKET_WINDOW_REFRESH_INTERVAL", 120)
@@ -88,7 +105,7 @@ if _watchdog_recovery:
 # The mutable, live ticker list — seeded once from config.TICKERS on
 # first boot, then persisted to tickers.json and editable via the web
 # UI from then on. config.TICKERS itself is never touched again.
-tickers = web.load_tickers(getattr(config, "TICKERS", []))
+tickers = tickers_store.load(getattr(config, "TICKERS", []))
 
 quotes = {}
 market_open = True  # assume open until the first market-status check
@@ -290,6 +307,27 @@ def refresh_quotes():
 
 
 _button_a_was_pressed = False
+_button_b_was_pressed = False
+
+
+def _check_display_mode_button():
+    """Edge-detected the same way as Button A (_check_mode_toggle_button()
+    below) — flips ticker/heatmap display mode exactly once per physical
+    press of Button B, previously unassigned. Reading and writing
+    display_mode's persisted file here is safe on this (display) thread
+    for the same reason quote_mode's is in _check_mode_toggle_button():
+    it's local flash I/O, not a networked or shared-state write."""
+    global _button_b_was_pressed
+    pressed = display.pu.is_pressed(display.pu.BUTTON_B)
+    just_pressed = pressed and not _button_b_was_pressed
+    _button_b_was_pressed = pressed
+    if not just_pressed:
+        return False
+    new_mode = "heatmap" if display_mode.load() != "heatmap" else "scroll"
+    display_mode.save(new_mode)
+    label = "HEATMAP MODE" if new_mode == "heatmap" else "TICKER MODE"
+    display.scroll_text(label, NEUTRAL_COLOR, speed=SCROLL_SPEED)
+    return True
 
 
 def _check_mode_toggle_button():
@@ -315,14 +353,24 @@ def _check_mode_toggle_button():
     return True
 
 
-def _render_ticker(symbol):
+def _check_overlay_buttons():
+    """X/Y/A/B are checked the same way regardless of display mode — a
+    single press of A flips price source (_check_mode_toggle_button()),
+    a single press of B flips ticker/heatmap display mode
+    (_check_display_mode_button()), holding X shows the board's IP,
+    holding Y shows the current time and flags a resync. Returns True
+    if one of them fired (and already scrolled its own feedback), so
+    the caller skips its normal render for this pass."""
     if _check_mode_toggle_button():
-        return
+        return True
+
+    if _check_display_mode_button():
+        return True
 
     if display.pu.is_pressed(display.pu.BUTTON_X):
         ip = wifi.ip_address or "NO WIFI"
         display.scroll_text("HTTP://" + ip, NEUTRAL_COLOR, speed=SCROLL_SPEED)
-        return
+        return True
 
     if display.pu.is_pressed(display.pu.BUTTON_Y):
         # This thread never touches the network itself (see
@@ -333,6 +381,13 @@ def _render_ticker(symbol):
         global clock_sync_requested
         clock_sync_requested = True
         display.scroll_text(clock.now_string(), NEUTRAL_COLOR, speed=SCROLL_SPEED)
+        return True
+
+    return False
+
+
+def _render_ticker(symbol):
+    if _check_overlay_buttons():
         return
 
     if symbol not in quotes:
@@ -355,6 +410,56 @@ def _render_ticker(symbol):
         display.scroll_text(format_quote(symbol, price, change_percent), color, speed=SCROLL_SPEED)
 
 
+def _heatmap_cell_color(symbol):
+    """One ticker's colour for heatmap mode: hue is red/green same as
+    scroll mode, but brightness is graded by the size of the move
+    (HEATMAP_FLOOR..full across 0..HEATMAP_SATURATION_PERCENT) instead
+    of needing a second pixel to convey magnitude. Mirrors
+    _render_ticker()'s not-yet-fetched-vs-errored distinction (absent
+    from `quotes` vs present but None)."""
+    if symbol not in quotes:
+        return OFF_COLOR
+    quote = quotes[symbol]
+    if quote is None:
+        return ERROR_COLOR
+    _price, change_percent, _change_dollar = quote
+    base = UP_COLOR if change_percent >= 0 else DOWN_COLOR
+    fraction = min(abs(change_percent) / HEATMAP_SATURATION_PERCENT, 1.0)
+    factor = HEATMAP_FLOOR + (1 - HEATMAP_FLOOR) * fraction
+    color = tuple(int(c * factor) for c in base)
+    if not market_open:
+        color = dim(color)
+    return color
+
+
+def _heatmap_sort_key(symbol):
+    """Descending % change, the usual way a stock heatmap orders
+    itself — gainers cluster at one end, losers at the other, so the
+    grid reads as a gradient at a glance instead of needing to hunt
+    across an alphabetical layout for the reddest/greenest cell. A
+    ticker with no usable quote yet (not fetched, or errored) sorts
+    after every real number, grouped at the tail end rather than
+    scattered through the gradient by where its symbol falls
+    alphabetically."""
+    quote = quotes.get(symbol)
+    return quote[1] if quote is not None else float("-inf")
+
+
+def _render_heatmap_frame():
+    """One heatmap redraw. Button handling is the same X/IP, Y/clock,
+    A/mode-source behaviour _render_ticker() uses (see
+    _check_overlay_buttons()), just checked once per frame instead of
+    once per ticker, since there's no per-ticker cycle in this mode."""
+    if _check_overlay_buttons():
+        return
+
+    cell_count = HEATMAP_COLS * HEATMAP_ROWS
+    ordered = sorted(tickers, key=_heatmap_sort_key, reverse=True)[:cell_count]
+    colors = [_heatmap_cell_color(symbol) for symbol in ordered]
+    display.draw_grid(colors, HEATMAP_COLS, HEATMAP_ROWS)
+    time.sleep(HEATMAP_REFRESH_SECONDS)
+
+
 def display_loop():
     """Runs on the second core. Cycles the display from whatever's
     currently in `quotes`, entirely independent of the fetch loop's own
@@ -369,21 +474,52 @@ def display_loop():
     since the last scheduled sync doesn't show up in the reading.
     Pressing A (a single press, not held — see
     _check_mode_toggle_button()) flips between REST and websocket
-    prices, showing the new mode's name once as feedback.
+    prices, showing the new mode's name once as feedback. Which
+    tickers actually get a turn is narrowed by scroll_selection.py's
+    per-row "Ticker mode" checkboxes on the web UI, for a watchlist too
+    long to sit through one symbol at a time.
 
-    Each ticker's render is wrapped in a try/except: an uncaught
-    exception on this thread doesn't print a visible traceback the way
-    a main-thread crash does — it just silently kills the thread,
-    leaving the screen permanently blank with no diagnostic. Catching
-    and logging here means a one-off error skips a turn instead of
-    ending the whole display."""
+    Pressing B (also a single press — see _check_display_mode_button())
+    flips between this ticker/scroll mode and heatmap mode, where every
+    watchlist ticker is instead shown at once as a graded-colour cell in
+    a grid via _render_heatmap_frame() — X/Y/A still work the same way
+    there, just checked once per frame rather than once per ticker, and
+    scroll_selection doesn't apply (heatmap always shows everything).
+    display_mode.load() is re-checked before every single ticker/frame
+    (not just once per lap through the watchlist), so a B press takes
+    effect within about one ticker's scroll rather than waiting out
+    however many symbols are left in the current pass.
+
+    Each render is wrapped in a try/except: an uncaught exception on
+    this thread doesn't print a visible traceback the way a main-thread
+    crash does — it just silently kills the thread, leaving the screen
+    permanently blank with no diagnostic. Catching and logging here
+    means a one-off error skips a turn (or a frame) instead of ending
+    the whole display."""
     while True:
-        for symbol in tickers:
+        if display_mode.load() == "heatmap":
             try:
-                _render_ticker(symbol)
+                _render_heatmap_frame()
             except Exception as exc:
-                print("display_loop error on", symbol, exc)
+                print("display_loop error (heatmap)", exc)
                 time.sleep(1)
+        else:
+            # scroll_selection is per-row on the web UI's watchlist
+            # table — reading it here (flash I/O, not network) is safe
+            # on this thread for the same reason quote_mode.load() is
+            # in _check_mode_toggle_button() above. Falls back to the
+            # full watchlist if every ticker's been excluded, rather
+            # than cycling nothing.
+            excluded = scroll_selection.load()
+            scroll_tickers = [symbol for symbol in tickers if symbol not in excluded] or tickers
+            for symbol in scroll_tickers:
+                if display_mode.load() != "scroll":
+                    break  # switched to heatmap mid-pass — let the outer loop pick that up
+                try:
+                    _render_ticker(symbol)
+                except Exception as exc:
+                    print("display_loop error on", symbol, exc)
+                    time.sleep(1)
 
 
 def fetch_loop():

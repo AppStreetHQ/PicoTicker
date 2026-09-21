@@ -28,6 +28,19 @@ class Display:
                 lit = bits[row] == "#"
                 self.pu.set_pixel(x, y, *(color if lit else OFF))
 
+    def draw_grid(self, colors, cols, rows):
+        """Draw a cols x rows grid of solid-colour cells, centered on the
+        display, one colour per cell in row-major order. Cells beyond the
+        edge of the physical display (grid larger than the panel) are
+        silently skipped rather than raising."""
+        x_offset = (self.width - cols) // 2
+        y_offset = (self.height - rows) // 2
+        for i, color in enumerate(colors):
+            x = x_offset + i % cols
+            y = y_offset + i // cols
+            if 0 <= x < self.width and 0 <= y < self.height:
+                self.pu.set_pixel(x, y, *color)
+
     def scroll_text(self, text, color, speed=0.4):
         """Scroll a line of text right-to-left across the display once."""
         columns = []

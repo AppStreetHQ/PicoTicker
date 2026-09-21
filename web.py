@@ -14,9 +14,10 @@ import dim_level
 import dst
 import live_quotes
 import quote_mode
+import scroll_selection
+import tickers as tickers_store
 from stocks import symbol_exists
 
-TICKERS_FILE = "tickers.json"
 FETCH_THROTTLE_SECONDS = getattr(config, "FETCH_THROTTLE_SECONDS", 0.5)
 MAX_TICKERS = 50  # Finnhub's free-tier websocket subscription limit
 
@@ -44,34 +45,40 @@ tr.flash {{ animation: flashRow 1.2s ease-out; }}
 <body>
 <h1>PicoTicker</h1>
 <h2>Watchlist</h2>
-<form method="POST" action="/tickers/remove" id="removeForm">
+<form method="POST" action="/tickers/update" id="watchlistForm">
 <table>
-<tr><th></th><th class="sortable" data-sort="ticker">Ticker<span class="sortArrow active">&#9660;</span></th><th>Price</th><th class="sortable" data-sort="change">Change<span class="sortArrow">&#8645;</span></th></tr>
+<tr><th></th><th class="sortable" data-sort="ticker">Ticker<span class="sortArrow active">&#9660;</span></th><th>Price</th><th class="sortable" data-sort="change">Change<span class="sortArrow">&#8645;</span></th><th title="Cycled in ticker (scroll) mode; heatmap mode always shows every ticker regardless">Ticker mode</th></tr>
 {rows}
 </table>
-<button type="submit" id="removeBtn" disabled>Remove selected</button>
+<button type="submit" id="updateBtn" disabled>Update</button>
 <p class="hint">{remove_error}</p>
 </form>
 <script>
-var removeForm = document.getElementById("removeForm");
-var removeBtn = document.getElementById("removeBtn");
-var checkboxes = removeForm.querySelectorAll("input[type=checkbox]");
+// One "Update" submit applies both the checked "remove" boxes and
+// whatever the "Ticker mode" boxes are currently set to (see
+// scroll_selection.py) — not two separate save mechanisms, so the
+// button starts disabled and only lights up once something in the
+// table actually differs from what the page loaded with.
+var watchlistForm = document.getElementById("watchlistForm");
+var updateBtn = document.getElementById("updateBtn");
+var watchlistCheckboxes = watchlistForm.querySelectorAll('input[type="checkbox"]');
+var initialChecked = Array.prototype.map.call(watchlistCheckboxes, function (cb) {{ return cb.checked; }});
 
-function anyChecked() {{
-    for (var i = 0; i < checkboxes.length; i++) {{
-        if (checkboxes[i].checked) {{ return true; }}
+function watchlistChanged() {{
+    for (var i = 0; i < watchlistCheckboxes.length; i++) {{
+        if (watchlistCheckboxes[i].checked !== initialChecked[i]) {{ return true; }}
     }}
     return false;
 }}
 
-for (var i = 0; i < checkboxes.length; i++) {{
-    checkboxes[i].addEventListener("change", function () {{
-        removeBtn.disabled = !anyChecked();
+for (var i = 0; i < watchlistCheckboxes.length; i++) {{
+    watchlistCheckboxes[i].addEventListener("change", function () {{
+        updateBtn.disabled = !watchlistChanged();
     }});
 }}
-removeForm.addEventListener("submit", function () {{
-    removeBtn.disabled = true;
-    removeBtn.textContent = "Removing...";
+watchlistForm.addEventListener("submit", function () {{
+    updateBtn.disabled = true;
+    updateBtn.textContent = "Updating...";
 }});
 
 // Click a "Ticker"/"Change" header to sort the watchlist table by it,
@@ -81,7 +88,7 @@ removeForm.addEventListener("submit", function () {{
 // display text, so it stays correct regardless of that formatting -
 // paintQuote() keeps data-change in sync on every live update too.
 var sortableHeaders = document.querySelectorAll("th.sortable");
-var tableBody = removeForm.querySelector("table").tBodies[0];
+var tableBody = watchlistForm.querySelector("table").tBodies[0];
 var sortState = {{ key: "ticker", dir: 1 }};  // matches the server's default render order (sorted(tickers))
 
 // Reorders the rows already in the DOM to match sortState, without
@@ -299,21 +306,6 @@ MAX_REACHED_TEMPLATE = r"""<h2>Add a stock</h2>
 <p>You're at the {max_tickers}-ticker limit — remove one above to add another.</p>"""
 
 
-def load_tickers(default):
-    try:
-        with open(TICKERS_FILE) as f:
-            return sorted(json.load(f))
-    except Exception:
-        tickers = sorted(default)
-        save_tickers(tickers)
-        return tickers
-
-
-def save_tickers(tickers):
-    with open(TICKERS_FILE, "w") as f:
-        json.dump(tickers, f)
-
-
 def start_server(port=80):
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -421,17 +413,19 @@ def _format_quote_cells(ticker, quotes):
     return price_text, change_text, color, change_percent
 
 
-def _render_ticker_rows(tickers, quotes):
+def _render_ticker_rows(tickers, quotes, scroll_excluded):
     rows = []
     for t in tickers:
         price, change, color, change_raw = _format_quote_cells(t, quotes)
+        scroll_checked = "" if t in scroll_excluded else "checked"
         rows.append(
             '<tr data-ticker="{t}" data-change="{change_raw}">'
             '<td><input type="checkbox" name="remove" value="{t}"></td>'
             "<td>{t}</td>"
             '<td id="price-{t}">{price}</td>'
-            '<td id="change-{t}" style="color:{color}">{change}</td></tr>'.format(
-                t=t, price=price, change=change, color=color, change_raw=change_raw
+            '<td id="change-{t}" style="color:{color}">{change}</td>'
+            '<td><input type="checkbox" name="include" value="{t}" {scroll_checked}></td></tr>'.format(
+                t=t, price=price, change=change, color=color, change_raw=change_raw, scroll_checked=scroll_checked
             )
         )
     return "".join(rows)
@@ -491,7 +485,7 @@ def _render_page(tickers, quotes, remove_error="", add_error="", new_ticker_valu
     state = dst.load()
     live_mode = quote_mode.load()
     return PAGE_TEMPLATE.format(
-        rows=_render_ticker_rows(tickers, quotes),
+        rows=_render_ticker_rows(tickers, quotes, scroll_selection.load()),
         remove_error=remove_error,
         add_section=add_section,
         live_mode_js="true" if live_mode else "false",
@@ -582,7 +576,11 @@ def poll(server_socket, tickers, quotes=None):
         method, path, _ = request_line.split(" ", 2)
         path = path.split("?", 1)[0]  # strip the polling script's cache-busting ?t=... param
 
-        if method == "POST" and path == "/tickers/remove":
+        if method == "POST" and path == "/tickers/update":
+            # One form covers both the "remove" checkboxes and every
+            # surviving row's "Ticker mode" checkbox (see
+            # scroll_selection.py) — submitted together as a single
+            # Update, not two separate save actions.
             to_remove = set(_parse_multi(body, "remove"))
             new_tickers = sorted(t for t in tickers if t not in to_remove)
             if not new_tickers:
@@ -591,7 +589,14 @@ def poll(server_socket, tickers, quotes=None):
                 ))
             else:
                 tickers = new_tickers
-                save_tickers(tickers)
+                tickers_store.save(tickers)
+                # Every surviving row's checkbox state was just
+                # submitted, so this replaces the exclusion set outright
+                # rather than diffing against the old one — a removed
+                # symbol can't linger in it, with no separate pruning
+                # step needed.
+                included = set(_parse_multi(body, "include"))
+                scroll_selection.save({t for t in tickers if t not in included})
                 conn.sendall(b"HTTP/1.1 303 See Other\r\nLocation: /\r\n\r\n")
         elif method == "POST" and path == "/tickers/add":
             fields = _parse_form(body)
@@ -603,7 +608,7 @@ def poll(server_socket, tickers, quotes=None):
                 ))
             else:
                 tickers = sorted(tickers + [symbol])
-                save_tickers(tickers)
+                tickers_store.save(tickers)
                 conn.sendall(b"HTTP/1.1 303 See Other\r\nLocation: /\r\n\r\n")
         elif method == "POST" and path == "/dst":
             # Unchecked checkboxes aren't submitted at all by the
