@@ -308,23 +308,43 @@ def refresh_quotes():
 
 _button_a_was_pressed = False
 _button_b_was_pressed = False
+# In-memory cache of display_mode.json, owned by this (display) thread —
+# see _check_display_mode_button()'s docstring for why display_loop()
+# reads this instead of calling display_mode.load() on every frame.
+_current_display_mode = display_mode.load()
 
 
 def _check_display_mode_button():
     """Edge-detected the same way as Button A (_check_mode_toggle_button()
     below) — flips ticker/heatmap display mode exactly once per physical
-    press of Button B, previously unassigned. Reading and writing
-    display_mode's persisted file here is safe on this (display) thread
-    for the same reason quote_mode's is in _check_mode_toggle_button():
-    it's local flash I/O, not a networked or shared-state write."""
-    global _button_b_was_pressed
+    press of Button B, previously unassigned. Writing display_mode's
+    persisted file here (on a physical button press, so at most a
+    couple of times a minute) is fine, but display_loop() below reads
+    _current_display_mode — an in-memory cache this function updates —
+    rather than calling display_mode.load() itself: there's no web UI
+    toggle for this setting (unlike quote_mode/dim_level, which do need
+    a fresh load() every check since the web UI can change them from
+    the other thread at any time), so this thread already owns the only
+    way this value changes and doesn't need to re-read flash to find
+    out. That matters on the RP2040 specifically: both cores execute
+    from flash (XIP), so a flash op on one core can stall whatever the
+    other core's thread is doing — display_loop() re-reading this file
+    every HEATMAP_REFRESH_SECONDS (0.5s), forever, made a collision with
+    fetch_loop()'s own flash writes (diagnostics_log, tickers.json, ...)
+    on the other core far likelier than ticker mode's much slower,
+    scroll-duration-throttled equivalent check ever was — this is what
+    was behind heatmap mode hanging (taking the web server down with
+    it) far more often than ticker mode's own occasional hangs, market
+    open or closed."""
+    global _button_b_was_pressed, _current_display_mode
     pressed = display.pu.is_pressed(display.pu.BUTTON_B)
     just_pressed = pressed and not _button_b_was_pressed
     _button_b_was_pressed = pressed
     if not just_pressed:
         return False
-    new_mode = "heatmap" if display_mode.load() != "heatmap" else "scroll"
+    new_mode = "heatmap" if _current_display_mode != "heatmap" else "scroll"
     display_mode.save(new_mode)
+    _current_display_mode = new_mode
     label = "HEATMAP MODE" if new_mode == "heatmap" else "TICKER MODE"
     display.scroll_text(label, NEUTRAL_COLOR, speed=SCROLL_SPEED)
     return True
@@ -410,25 +430,57 @@ def _render_ticker(symbol):
         display.scroll_text(format_quote(symbol, price, change_percent), color, speed=SCROLL_SPEED)
 
 
-def _heatmap_cell_color(symbol):
+
+# display-thread-only: each symbol's price as of the previous heatmap
+# frame, for _heatmap_cell_color()'s change-flash effect — never
+# touched by fetch_loop, so (unlike quotes/tickers) this doesn't need
+# to tolerate a concurrent writer.
+_last_heatmap_price = {}
+
+
+def _heatmap_cell_color(symbol, dim_factor):
     """One ticker's colour for heatmap mode: hue is red/green same as
     scroll mode, but brightness is graded by the size of the move
     (HEATMAP_FLOOR..full across 0..HEATMAP_SATURATION_PERCENT) instead
-    of needing a second pixel to convey magnitude. Mirrors
-    _render_ticker()'s not-yet-fetched-vs-errored distinction (absent
-    from `quotes` vs present but None)."""
+    of needing a second pixel to convey magnitude — except for exactly
+    the one frame a symbol's price first differs from the previous
+    frame's, where it pops to full, unscaled brightness instead of its
+    graded value: a quiet ticker sits at its normal brightness, an
+    actively-trading one visibly flickers each time a new trade lands.
+    Purely an in-memory comparison against _last_heatmap_price (no
+    persistence, no extra flash I/O — see that dict's own comment), and
+    only costs a dict lookup/store since it's already being computed
+    once per rendered cell here, after the sort.
+    Mirrors _render_ticker()'s not-yet-fetched-vs-errored distinction
+    (absent from `quotes` vs present but None). Takes the closed-market
+    dim factor as an argument, precomputed once per frame by the
+    caller, rather than calling dim() (and therefore dim_level.load(),
+    a flash read) here once per cell — with up to
+    HEATMAP_COLS*HEATMAP_ROWS cells redrawn every
+    HEATMAP_REFRESH_SECONDS, that was up to ~100 flash reads/second
+    whenever the market was closed, versus one per multi-second scroll
+    cycle in ticker mode. On the RP2040 both cores execute from flash
+    (XIP), so a flash op on one core can stall whichever core the other
+    thread is running on — this is what was behind heatmap mode hanging
+    (mid-frame, taking the web server down with it) far more often than
+    ticker mode's own occasional hangs."""
     if symbol not in quotes:
         return OFF_COLOR
     quote = quotes[symbol]
     if quote is None:
         return ERROR_COLOR
-    _price, change_percent, _change_dollar = quote
+    price, change_percent, _change_dollar = quote
     base = UP_COLOR if change_percent >= 0 else DOWN_COLOR
-    fraction = min(abs(change_percent) / HEATMAP_SATURATION_PERCENT, 1.0)
-    factor = HEATMAP_FLOOR + (1 - HEATMAP_FLOOR) * fraction
-    color = tuple(int(c * factor) for c in base)
+    previous_price = _last_heatmap_price.get(symbol)
+    _last_heatmap_price[symbol] = price
+    if previous_price is not None and price != previous_price:
+        color = base
+    else:
+        fraction = min(abs(change_percent) / HEATMAP_SATURATION_PERCENT, 1.0)
+        factor = HEATMAP_FLOOR + (1 - HEATMAP_FLOOR) * fraction
+        color = tuple(int(c * factor) for c in base)
     if not market_open:
-        color = dim(color)
+        color = tuple(int(c * dim_factor) for c in color)
     return color
 
 
@@ -455,7 +507,17 @@ def _render_heatmap_frame():
 
     cell_count = HEATMAP_COLS * HEATMAP_ROWS
     ordered = sorted(tickers, key=_heatmap_sort_key, reverse=True)[:cell_count]
-    colors = [_heatmap_cell_color(symbol) for symbol in ordered]
+    # Drop any symbol no longer on the watchlist from the change-flash
+    # cache, so editing tickers over weeks of continuous uptime doesn't
+    # grow _last_heatmap_price without bound.
+    still_tracked = set(tickers)
+    for symbol in list(_last_heatmap_price):
+        if symbol not in still_tracked:
+            del _last_heatmap_price[symbol]
+    # Read once per frame, not once per cell — see _heatmap_cell_color()'s
+    # docstring for why that matters here specifically.
+    dim_factor = dim_level.load() / 100
+    colors = [_heatmap_cell_color(symbol, dim_factor) for symbol in ordered]
     display.draw_grid(colors, HEATMAP_COLS, HEATMAP_ROWS)
     time.sleep(HEATMAP_REFRESH_SECONDS)
 
@@ -485,10 +547,12 @@ def display_loop():
     a grid via _render_heatmap_frame() — X/Y/A still work the same way
     there, just checked once per frame rather than once per ticker, and
     scroll_selection doesn't apply (heatmap always shows everything).
-    display_mode.load() is re-checked before every single ticker/frame
-    (not just once per lap through the watchlist), so a B press takes
-    effect within about one ticker's scroll rather than waiting out
-    however many symbols are left in the current pass.
+    _current_display_mode (an in-memory cache _check_display_mode_button()
+    updates directly — see its docstring for why this isn't a
+    display_mode.load() call) is re-checked before every single
+    ticker/frame (not just once per lap through the watchlist), so a B
+    press takes effect within about one ticker's scroll rather than
+    waiting out however many symbols are left in the current pass.
 
     Each render is wrapped in a try/except: an uncaught exception on
     this thread doesn't print a visible traceback the way a main-thread
@@ -497,7 +561,7 @@ def display_loop():
     means a one-off error skips a turn (or a frame) instead of ending
     the whole display."""
     while True:
-        if display_mode.load() == "heatmap":
+        if _current_display_mode == "heatmap":
             try:
                 _render_heatmap_frame()
             except Exception as exc:
@@ -513,7 +577,7 @@ def display_loop():
             excluded = scroll_selection.load()
             scroll_tickers = [symbol for symbol in tickers if symbol not in excluded] or tickers
             for symbol in scroll_tickers:
-                if display_mode.load() != "scroll":
+                if _current_display_mode != "scroll":
                     break  # switched to heatmap mid-pass — let the outer loop pick that up
                 try:
                     _render_ticker(symbol)
