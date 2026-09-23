@@ -437,6 +437,37 @@ def _render_ticker(symbol):
 # to tolerate a concurrent writer.
 _last_heatmap_price = {}
 
+# display-thread-only cache of dim_level.load()'s result, refreshed on
+# a slower cadence than heatmap frames redraw — see
+# _heatmap_dim_factor()'s docstring.
+_cached_dim_factor = dim_level.load() / 100
+_last_dim_load_ms = time.ticks_ms()
+DIM_RELOAD_SECONDS = 5
+
+
+def _heatmap_dim_factor():
+    """dim_level.load()'s flash read, throttled to once every
+    DIM_RELOAD_SECONDS instead of once per heatmap frame
+    (HEATMAP_REFRESH_SECONDS = 0.5s, i.e. up to 10x/second). Reading it
+    every frame was the same RP2040 XIP flash-stall collision with
+    fetch_loop()'s own flash writes (diagnostics_log, tickers.json,
+    dim_level.json itself, ...) on the other core that
+    _check_display_mode_button()'s docstring describes as the original
+    cause of heatmap mode hanging — that fix moved _current_display_mode
+    to an in-memory cache, but dim_level.load() was left as a genuine
+    once-per-frame flash read (just once per frame instead of once per
+    cell, which cut it from ~100/s to ~2/s but didn't eliminate it), and
+    reproduced the same class of hang. Still fresh enough that a
+    web-UI dim-level change shows up within a few seconds, similar to
+    quote_mode/scroll_selection's per-ticker-scroll cadence in ticker
+    mode."""
+    global _cached_dim_factor, _last_dim_load_ms
+    now = time.ticks_ms()
+    if time.ticks_diff(now, _last_dim_load_ms) >= DIM_RELOAD_SECONDS * 1000:
+        _cached_dim_factor = dim_level.load() / 100
+        _last_dim_load_ms = now
+    return _cached_dim_factor
+
 
 def _heatmap_cell_color(symbol, dim_factor):
     """One ticker's colour for heatmap mode: hue is red/green same as
@@ -514,9 +545,10 @@ def _render_heatmap_frame():
     for symbol in list(_last_heatmap_price):
         if symbol not in still_tracked:
             del _last_heatmap_price[symbol]
-    # Read once per frame, not once per cell — see _heatmap_cell_color()'s
-    # docstring for why that matters here specifically.
-    dim_factor = dim_level.load() / 100
+    # Throttled cache, not a flash read every frame — see
+    # _heatmap_dim_factor()'s docstring for why that matters here
+    # specifically.
+    dim_factor = _heatmap_dim_factor()
     colors = [_heatmap_cell_color(symbol, dim_factor) for symbol in ordered]
     display.draw_grid(colors, HEATMAP_COLS, HEATMAP_ROWS)
     time.sleep(HEATMAP_REFRESH_SECONDS)
